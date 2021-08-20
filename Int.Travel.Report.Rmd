@@ -1,0 +1,83 @@
+---
+title: "Int.Travel.Report"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+library(tidyverse)
+library(plyr)
+library(rvest)
+library(rworldmap)
+```
+
+
+
+```{r source scripts, include=FALSE}
+source("./azure_functions.R")
+```
+
+
+
+```{r web scraping and defining green countries}
+#Scrape green country list from NI Direct website as of 18/08/21
+green.url <- "https://www.nidirect.gov.uk/node/14416#toc-1"
+green.countries <- read_html(green.url) %>% 
+  html_nodes("main") %>% 
+  html_nodes("article") %>% 
+  html_nodes('ul')
+green.countries <- html_text(green.countries[2])
+
+#Tidy Scraped Data
+green.countries <- str_split(green.countries, pattern = "\n\t") #Split single string into each country 
+green.countries <- as.data.frame(green.countries)
+colnames(green.countries) <- "country"
+green.countries <- gsub("\\s*\\([^\\)]+\\)","", as.character(green.countries$country)) #Remove brackets and everything in them
+green.countries <- str_remove(green.countries, "[\n]")
+green.countries <- str_remove(green.countries, " and Jerusalem")
+green.countries <- as.data.frame(green.countries)
+colnames(green.countries) <- "country"
+```
+
+```{r web scraping and defining red countries}
+#Scrape red country list from NI Direct website
+red.url <- "https://www.nidirect.gov.uk/articles/coronavirus-covid-19-travelling-red-list-country#toc-0"
+red.countries <- read_html(red.url) %>% 
+  html_nodes("main") %>% 
+  html_nodes("article") %>% 
+  html_nodes('ul')
+red.countries <- html_text(red.countries[2])
+
+#Tidy Scraped Data
+red.countries <- str_split(red.countries, pattern = "\n\t") #Split single string into each country 
+red.countries <- as.data.frame(red.countries)
+colnames(red.countries) <- "country"
+red.countries <- gsub("\\s*\\([^\\)]+\\)","", as.character(red.countries$country)) #Remove brackets and everything in them
+red.countries <- str_remove(red.countries, "[\n]")
+red.countries <- as.data.frame(red.countries)
+colnames(red.countries) <- "country"
+```
+
+```{r defining amber countries, include = F, message = F}
+CTA <- as.data.frame(c("United Kingdom", "Isle of Man", "Ireland", "Guernsey", "Jersey")) #Define Common Travel Area
+colnames(CTA) <- "country"
+
+#Define all countries in world
+amber.countries <- countryExData[ , 2] #rworldmap package which lists all countries 
+amber.countries <- gsub("Dem. Rep. Congo","Democratic Republic of Congo", amber.countries, fixed = T) 
+amber.countries <- gsub("Rep.","Republic", amber.countries, fixed = T) 
+amber.countries <- gsub("Viet Nam","Vietnam", amber.countries, fixed = T) 
+amber.countries <- as.data.frame(amber.countries)
+colnames(amber.countries) <- "country"
+
+#Amber countries are countries not on red or green lists or CTA
+non.amber.countries <- rbind(red.countries, green.countries, CTA)
+non.amber.countries <- sort(non.amber.countries$country) %>% 
+  as.data.frame()
+colnames(non.amber.countries) <- "country"
+
+#Remove countries that appear in green and red lists and CTA
+amber.countries <- anti_join(amber.countries, non.amber.countries)
+```
+
+
+
