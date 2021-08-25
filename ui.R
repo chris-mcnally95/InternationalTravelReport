@@ -15,7 +15,7 @@ ui <- dashboardPage(
   
   dashboardSidebar(
     sidebarMenu(
-      menuItem("Home", tabName = "home", icon = icon("bookmark"))
+      menuItem("Home", tabName = "home", icon = icon("home"))
     )
   ),
 

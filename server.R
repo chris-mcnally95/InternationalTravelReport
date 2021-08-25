@@ -2,11 +2,14 @@
 
 # Libraries
 library(shinydashboard)
+library(rangeBuilder)
 library(tidyverse)
 library(plyr)
 library(lubridate)
 library(rvest)
 library(rworldmap)
+library(clinUtils)
+
 
 # Source scripts
 source("./azure_functions.R")
@@ -101,7 +104,7 @@ function(input, output, session) {
   
   # Assign this weeks data
   status.assignment <- country.status %>% 
-    select(current.epiweek) 
+    dplyr::select(current.epiweek) 
   status.assignment[,1] <- current.country.status
   country.status <- replace(country.status, current.epiweek, status.assignment[,1])
   country.status$Epiweek32 <- country.status$Epiweek34
@@ -150,20 +153,45 @@ function(input, output, session) {
     filter(TypeOfPlace == "Travel outside Northern Ireland") %>%
     left_join(collectclosecontacts, by = c("CollectCallId" = "Id")) %>%
     left_join(cases, by = "CaseNumber") %>%
-    select(CountriesVisited.x, WhenDidYouLeaveNorthernIreland, WhenDidYouReturnToNorthernIreland, CaseNumber, FirstName, LastName, Gender.x, CreatedOn) %>% 
+    dplyr::select(CountriesVisited.x, WhenDidYouLeaveNorthernIreland, WhenDidYouReturnToNorthernIreland, CaseNumber, FirstName, LastName, Gender.x, CreatedOn) %>% 
     filter(CreatedOn >= "2021-01-01") %>% 
-    mutate(Epiweek = paste0("Epiweek", strftime(WhenDidYouReturnToNorthernIreland, format = "%V")))
-  
+    mutate(Epiweek = paste0("Epiweek", strftime(WhenDidYouReturnToNorthernIreland, format = "%V"))) 
+
   ## Tidy old data
   travellers$CountriesVisited.x <- gsub("ROI", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("RoI", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("roi", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("R.O.I.", "Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("R.O.I", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("Republic of Ireland", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("REPUBLIC OF IRELAND", "Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("County Donegal Southern Ireland", "Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Flight from India to LHR\nLHR to BHD", "India", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("India, England, N. Ireland", "India", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("India, LHR, N. Ireland", "India", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Ibiza", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("United Kingdom Skegness", "England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Uganda-Holland-England", "Uganda", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Teneriffe", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("New Delhi to London Heathrow then connecting flight to Belfast after quarantine.", "India", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Galway clinic Galway Clinic Doughiska Co. Galway H91HHT0 Ireland", "Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("travelled from dublin airport direct to istanbul airport on 25th March - no detail of flight but was at 16.15 or 16.45 hrs. Travelled from Istanbul sabiha gokcen airport on  4th April to london Standsted. Travelled from London stansted to Belfast international on 5th april", "Turkey", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Mallorca - Balearic Islands", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("England  - Liverpool", "England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Liverpool", "England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("London  - England", "England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("London, England", "England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Portsmouth, England", "England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Manchester, England", "England", travellers$CountriesVisited.x)
+  
+  travellers$CountriesVisited.x <- standardizeCountry(travellers$CountriesVisited.x, fuzzyDist = 10)
+  travellers$CountriesVisited.x <- tolower(travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- simpleCap(travellers$CountriesVisited.x, onlyFirst = F, rev = F)
+  travellers$CountriesVisited.x <- gsub("Republic of the Congo", "Democratic Republic of Congo", travellers$CountriesVisited.x, fixed = T)
+  #this still needs tweaking (str_contains)#
 
   ## Link data to country status 
-  travellers <- left_join(travellers, pivot.countries, by = c("Epiweek" = "Epiweek", "CountriesVisited.x" = "country"))
+  travellers.status <- left_join(travellers, pivot.countries, by = c("Epiweek" = "Epiweek", "CountriesVisited.x" = "country"))
   
   
   # Make Graphs
@@ -173,7 +201,7 @@ function(input, output, session) {
   output$total_cases <- renderInfoBox({
     infoBox(
       "Total Reported Cases from International Travellers", 
-      paste0(nrow(filter(travellers))), 
+      paste0(nrow(filter(travellers.status))), 
       icon = icon("globe-europe"), 
       color ="light-blue")
   })
@@ -181,7 +209,7 @@ function(input, output, session) {
   output$cases_this_week <- renderInfoBox({
     infoBox(
       "Reported Cases This Week from International Travellers", 
-      paste0(nrow(filter(travellers,
+      paste0(nrow(filter(travellers.status,
                          Epiweek == current.epiweek))), 
       icon = icon("globe-europe"), 
       color = "light-blue")
@@ -190,57 +218,57 @@ function(input, output, session) {
   output$total_green_cases <- renderInfoBox({
     infoBox(
       "Total Reported Cases from Green Countries", 
-      paste0(nrow(filter(travellers,
+      paste0(nrow(filter(travellers.status,
                          Status == "Green"))), 
-      icon = icon("virus"), 
+      icon = icon("chart-bar"), 
       color ="green")
   })
   
   output$green_cases_this_week <- renderInfoBox({
     infoBox(
       "Cases This Week from Green Countries", 
-      paste0(nrow(filter(travellers,
+      paste0(nrow(filter(travellers.status,
                          Status == "Green",
                          Epiweek == current.epiweek))), 
-      icon = icon("virus"), 
+      icon = icon("plane-arrival"), 
       color = "green")
   })
   
   output$total_amber_cases <- renderInfoBox({
     infoBox(
       "Total Reported Cases from Amber Countries", 
-      paste0(nrow(filter(travellers,
+      paste0(nrow(filter(travellers.status,
                          Status == "Amber"))), 
-      icon = icon("viruses"), 
+      icon = icon("chart-bar"), 
       color ="yellow")
   })
   
   output$amber_cases_this_week <- renderInfoBox({
     infoBox(
       "Cases This Week from Amber Countries", 
-      paste0(nrow(filter(travellers,
+      paste0(nrow(filter(travellers.status,
                          Status == "Amber",
                          Epiweek == current.epiweek))), 
-      icon = icon("viruses"), 
+      icon = icon("plane-arrival"), 
       color = "yellow")
   })
   
   output$total_red_cases <- renderInfoBox({
     infoBox(
       "Total Reported Cases from Red Countries", 
-      paste0(nrow(filter(travellers,
+      paste0(nrow(filter(travellers.status,
                          Status == "Red"))), 
-      icon = icon("virus"), 
+      icon = icon("chart-bar"), 
       color ="red")
   })
   
   output$red_cases_this_week <- renderInfoBox({
     infoBox(
       "Cases This Week from Red Countries", 
-      paste0(nrow(filter(travellers,
+      paste0(nrow(filter(travellers.status,
                          Status == "Red",
                          Epiweek == current.epiweek))), 
-      icon = icon("virus"), 
+      icon = icon("plane-arrival"), 
       color = "red")
   })
 }
