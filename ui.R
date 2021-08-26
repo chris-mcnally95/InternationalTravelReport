@@ -15,7 +15,8 @@ ui <- dashboardPage(
   
   dashboardSidebar(
     sidebarMenu(
-      menuItem("Home", tabName = "home", icon = icon("home"))
+      menuItem("Home", tabName = "home", icon = icon("home")),
+      menuItem("Country Status", tabName = "tables", icon = icon("list"))
     )
   ),
 
@@ -35,7 +36,7 @@ dashboardBody(
           solidHeader = TRUE,
           title ="Welcome to the International Travel Dashboard.",
           p("This dashboard has been built to aid the CTC Data Management Team / Surveillance Team to montior COVID-19 cases related to international travel in 2021"),
-          p(strong("Please Note:")," The free text inputs of country entries is yet to be addressed, therefore, some countries will be omitted temporarily")
+          p(strong("Please Note:")," The free text inputs of country entries are currently being addressed, therefore, some cases will be omitted temporarily")
         )
       ),
       
@@ -57,8 +58,38 @@ dashboardBody(
       fluidRow(
         infoBoxOutput("total_red_cases", width = 6),
         infoBoxOutput("red_cases_this_week", width = 6)
-      )
+      ),
+      
+      fluidRow(
+        box(
+          width = 12,
+          status = "primary",
+          solidHeader = TRUE,
+          title ="Countries by Frequency in 2021",
+          p("This table displays the countries associated with the most COVID-19 cases in 2021"),
+          p(strong("Please Note:")," The free text inputs of country entries are currently being addressed, therefore, some cases will be omitted temporarily"),
+          hr(),
+          shinycssloaders::withSpinner(DT::dataTableOutput("top_ten"), type = 2)
       )
     )
+  ),
+  
+  #--------------TABLES--------------
+  tabItem(
+    
+    tabName = "tables",
+    fluidRow(
+      box(
+        width = 12,
+        status = "primary",
+        solidHeader = TRUE,
+        title = "Country Status List",
+        p("Please enter name of country in search bar for RAG status"), 
+        hr(),
+        withSpinner(DT::dataTableOutput("all_countries"), type = 2)
+      )
+    )
+   )
   )
+ )
 )
