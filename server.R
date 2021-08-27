@@ -95,7 +95,7 @@ function(input, output, session) {
   current.country.status <- all.countries.status$status
   
   
-  country.status <- data.frame(matrix(NA, nrow = 189, ncol = 52))
+  country.status <- data.frame(matrix(NA, nrow = 192, ncol = 52))
   
   epiweek <- (paste0("Epiweek", 1:52))
   colnames(country.status) <- epiweek
@@ -161,7 +161,7 @@ function(input, output, session) {
   ## Tidy pre drop down data
   travellers$CountriesVisited.x <- lapply(travellers$CountriesVisited.x, str_trim)
   
-  ### START ####
+  ### TIDY START ####
   travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ENGLAND"] <- "England"
   travellers$CountriesVisited.x[travellers$CountriesVisited.x == "england"] <- "England"
   travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England - Liverpool"] <- "England"
@@ -739,7 +739,7 @@ function(input, output, session) {
   travellers$CountriesVisited.x <- gsub("Day trip to Leeds to visit son for first time this year.I believe I caught COVID from him as his household has tested positive and he’s awaiting results", "England", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("Derry", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("England, Scotland", "Scotland", travellers$CountriesVisited.x)
-  #### END ####
+  #### TIDY END ####
   
   country.count <- as.data.frame(table(travellers$CountriesVisited.x))
   country.count <- arrange(country.count, desc(Freq))
