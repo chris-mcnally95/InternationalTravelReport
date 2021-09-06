@@ -3,6 +3,8 @@
 # Libraries
 library(shinydashboard)
 library(shinycssloaders)
+library(ggplot2)
+library(plotly)
 
 ######## SPINNER ########
 options(spinner.color = "#0275D8", spinner.color.background="#ffffff", spinner.size =2)
@@ -16,10 +18,14 @@ ui <- dashboardPage(
   dashboardSidebar(
     sidebarMenu(
       menuItem("Home", tabName = "home", icon = icon("home")),
-      menuItem("Country Status", tabName = "tables", icon = icon("list"))
+      menuItem("Country Frequencies", tabName = "country_frequencies", icon = icon("globe")),
+      menuItem("Cases by Epiweek", tabName = "cases_by_epiweek", icon = icon("chart-bar")),
+      menuItem("Cases by Country", tabName = "cases_by_epiweek_by_rag", icon = icon("chart-bar")),
+      menuItem("Country Status", tabName = "tables", icon = icon("list")),
+      menuItem("Methodology", tabName = "methodology", icon = icon("clipboard-list"))
     )
   ),
-
+  
 dashboardBody(
   
   tabItems(
@@ -41,8 +47,13 @@ dashboardBody(
       ),
       
       fluidRow(
-        withSpinner(infoBoxOutput("total_cases", width = 6), type = 2),
+        withSpinner(infoBoxOutput("total_cases", width = 6), type = 2, color.background = "#ecf0f5"),
         infoBoxOutput("cases_this_week", width = 6)
+      ),
+      
+      fluidRow(
+        infoBoxOutput("total_percent", width = 6),
+        infoBoxOutput("percent_this_week", width = 6)
       ),
       
         fluidRow(
@@ -58,22 +69,111 @@ dashboardBody(
       fluidRow(
         infoBoxOutput("total_red_cases", width = 6),
         infoBoxOutput("red_cases_this_week", width = 6)
-      ),
-      
-      fluidRow(
-        box(
-          width = 12,
-          status = "primary",
-          solidHeader = TRUE,
-          title ="Countries by Frequency in 2021",
-          p("This table displays the countries associated with the most COVID-19 cases in 2021"),
-          p(strong("Please Note:")," The free text inputs of country entries are currently being addressed, therefore, some cases will be omitted temporarily"),
-          hr(),
-          shinycssloaders::withSpinner(DT::dataTableOutput("top_ten"), type = 2)
+      )
+    ),
+  
+  #--------------COUNTRY FREQUENCIES--------------
+  tabItem(
+    tabName = "country_frequencies",
+    fluidRow(
+      box(
+        width = 12,
+        status = "primary",
+        solidHeader = TRUE,
+        title ="Countries by Frequency in 2021",
+        p("This table displays the top countries associated with the most COVID-19 cases in 2021"),
+        p(strong("Please Note:")," The free text inputs of country entries (as well as cases with multiple countries visited) are currently being addressed, therefore, some cases will be omitted and/or be erroneous temporarily"),
+        hr(),
+        shinycssloaders::withSpinner(DT::dataTableOutput("top_ten"), type = 2)
+        )
+      )
+    ),
+  
+  #--------------CASES BY EPIWEEK--------------
+  tabItem(
+    tabName = "cases_by_epiweek",
+    fluidRow(
+      box(
+        width = 12,
+        status = "primary",
+        solidHeader = TRUE,
+        title = "Cases by Epiweek",
+        p("The graph below shows the count of cases that have traveled outside of Northern Ireland in 2021 per epiweek."),
+        p("Use the slider input to select the range of epiweeks you wish to see."),
+        hr(),
+        sliderInput(
+          inputId = "week",
+          label = "Please select desired Epiweek range",
+          value = c(0,as.numeric(strftime(Sys.Date(), format = "%V"))),
+          min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
+          width = "400px"), #Added slider input fo x axis determination on chart
+        shinycssloaders::withSpinner(plotlyOutput("case.by.week.chart", height = NULL)
+        )
       )
     )
   ),
   
+  # #--------------CASES BY EPIWEEK BY RAG STATUS--------------
+  tabItem(
+    tabName = "cases_by_epiweek_by_rag",
+    fluidRow(
+      
+      box(
+        width = 12,
+        status = "primary",
+        solidHeader = TRUE,
+        title = "Countries and Cases by Epiweek",
+        p("The graphs below shows the count of cases that have traveled outside of Northern Ireland, including the countries, in 2021 per epiweek."),
+          ),
+
+       tabBox(
+           width = 12,
+           
+           tabPanel(
+             width = 12,
+             title = "All Countries and Cases by Epiweek",
+             p("This graph shows the count of cases from travellers outside NI per epiweek, broken down by countries travelled" ),
+             hr(),
+             sliderInput(
+               inputId = "week2",
+               label = "Please select desired Epiweek range",
+               value = c(0,as.numeric(strftime(Sys.Date(), format = "%V"))),
+               min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
+               width = "400px"), #Added slider input fo x axis determination on chart
+             shinycssloaders::withSpinner(plotlyOutput("all.rag.case.by.week.chart", height = NULL))
+           ),
+
+           tabPanel(
+             title = "Green Countries and Cases by Epiweek",
+             p("This graph shows the count of cases from travellers outside NI per epiweek, broken down by green countries travelled" ),
+             p(strong("Please Note:"), "NA countries omitted from this dataset" ),
+             hr(),
+             sliderInput(
+               inputId = "week3",
+               label = "Please select desired Epiweek range",
+               value = c(0,as.numeric(strftime(Sys.Date(), format = "%V"))),
+               min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
+               width = "400px"), #Added slider input fo x axis determination on chart
+             shinycssloaders::withSpinner(plotlyOutput("green.case.by.week.chart", height = NULL)),
+           ),
+           
+           tabPanel(
+             title = "Amber Countries and Cases by Epiweek",
+             p("This graph shows the count of cases from travellers outside NI per epiweek, broken down by amber countries travelled" ),
+             p(strong("Please Note:"), "NA countries omitted from this dataset" ),
+             hr(),
+             sliderInput(
+               inputId = "week4",
+               label = "Please select desired Epiweek range",
+               value = c(0,as.numeric(strftime(Sys.Date(), format = "%V"))),
+               min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
+               width = "400px"), #Added slider input fo x axis determination on chart
+             shinycssloaders::withSpinner(plotlyOutput("amber.case.by.week.chart", height = NULL)),
+        )
+      )
+    )
+  ),
+
   #--------------TABLES--------------
   tabItem(
     
@@ -88,6 +188,45 @@ dashboardBody(
         hr(),
         withSpinner(DT::dataTableOutput("all_countries"), type = 2)
       )
+    )
+  ),
+  
+  #--------------METHODOLOGY--------------
+  
+  tabItem(
+    
+    tabName = "methodology",
+    fluidRow(
+      box(
+        width = 12,
+        status = "primary",
+        solidHeader = TRUE,
+        title = "Methodology",
+        p(strong("Home")),
+        p("The information boxes displayed on the home tab give an insight into how many COVID-19 cases were assosiated with travel outside NI within the year 2021.
+          Each week is split up into epiweeks and a countries RAG status is updated every week based upon scraped data from the NI Direct webpage."),
+        p("An amber country is a country not presented within the green or red lists."),
+        
+        p(strong("Country Frequencies")),
+        p("This table gives an insight into the number of cases associated with a country within the year 2021.
+          Each week is split up into epiweeks and a countries RAG status is updated every week based upon scraped data from the NI Direct webpage."),
+        
+        p(strong("Cases by Epiweek")),
+        p("The data displayed in this chart depicts the number of cases per epiweek associated with travel outside NI by RAG status of countries.
+          Each week is split up into epiweeks and a countries RAG status is updated every week based upon scraped data from the NI Direct webpage."),
+        
+        p(strong("Countries by Epiweek")),
+        p("The data displayed in this chart depicts the number of cases per epiweek associated with travel outside NI by the countries travlled.
+          This chart is then split into tabs depicted only green and amber countries travelled. (Red countries are omitted due to low numbers.)
+          Each week is split up into epiweeks and a countries RAG status is updated every week based upon scraped data from the NI Direct webpage."),
+        
+        p(strong("Country Status")),
+        p("This table shows the current RAG status for every country within the current epiweek."),
+        
+        p(strong("References")),
+        tagList("Green Countries Reference:", a("Green List.", href= "https://www.nidirect.gov.uk/node/14416#toc-1")), 
+        tagList("Red Countries Reference:", a("Red List.", href= "https://www.nidirect.gov.uk/articles/coronavirus-covid-19-travelling-red-list-country#toc-0"))
+     )
     )
    )
   )
