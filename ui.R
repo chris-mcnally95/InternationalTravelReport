@@ -19,9 +19,10 @@ ui <- dashboardPage(
     sidebarMenu(
       menuItem("Home", tabName = "home", icon = icon("home")),
       menuItem("Country Frequencies", tabName = "country_frequencies", icon = icon("globe")),
-      menuItem("Cases by Epiweek", tabName = "cases_by_epiweek", icon = icon("chart-bar")),
-      menuItem("Cases by Country", tabName = "cases_by_epiweek_by_rag", icon = icon("chart-bar")),
-      menuItem("Country Status", tabName = "tables", icon = icon("list")),
+      menuItem("Cases by Status", tabName = "cases_by_rag", icon = icon("chart-bar")),
+      menuItem("Cases by Country", tabName = "cases_by_country", icon = icon("globe-europe")),
+      menuItem("Reports", tabName = "reports", icon = icon("list")),
+      menuItem("Country Status", tabName = "tables", icon = icon("table")),
       menuItem("Methodology", tabName = "methodology", icon = icon("clipboard-list"))
     )
   ),
@@ -89,33 +90,50 @@ dashboardBody(
       )
     ),
   
-  #--------------CASES BY EPIWEEK--------------
+  #--------------CASES BY RAG--------------
   tabItem(
-    tabName = "cases_by_epiweek",
+    tabName = "cases_by_rag",
     fluidRow(
+      
       box(
         width = 12,
         status = "primary",
         solidHeader = TRUE,
-        title = "Cases by Epiweek",
-        p("The graph below shows the count of cases that have traveled outside of Northern Ireland in 2021 per epiweek."),
-        p("Use the slider input to select the range of epiweeks you wish to see."),
-        hr(),
-        sliderInput(
-          inputId = "week",
-          label = "Please select desired Epiweek range",
-          value = c(0,as.numeric(strftime(Sys.Date(), format = "%V"))),
-          min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
-          width = "400px"), #Added slider input fo x axis determination on chart
-        shinycssloaders::withSpinner(plotlyOutput("case.by.week.chart", height = NULL)
+        title = "Cases by Epiweek by RAG Status",
+        p("The graphs below shows the count of cases that have traveled outside of Northern Ireland, including the countries, in 2021 per epiweek."),
+      ),
+      
+      tabBox(
+        width = 12,
+        
+        tabPanel(
+          width = 12,
+          title = "Cases by Epiweek",
+          p("This graph shows the count of cases from travellers outside NI per epiweek, by RAG Status of those countries" ),
+          hr(),
+          sliderInput(
+            inputId = "week",
+            label = "Please select desired Epiweek range",
+            value = c(0,as.numeric(strftime(Sys.Date(), format = "%V"))),
+            min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
+            width = "400px"), #Added slider input fo x axis determination on chart
+          shinycssloaders::withSpinner(plotlyOutput("case.by.week.chart", height = NULL))
+        ),
+        
+        tabPanel(
+          width = 12,
+          title = "Cases by Month",
+          p("This graph shows the count of cases from travellers outside NI per month, by RAG Status of those countries" ),
+          hr(),
+          shinycssloaders::withSpinner(plotlyOutput("case.by.month.chart", height = NULL))
         )
       )
     )
   ),
   
-  # #--------------CASES BY EPIWEEK BY RAG STATUS--------------
+  # #--------------CASES BY COUNTRY--------------
   tabItem(
-    tabName = "cases_by_epiweek_by_rag",
+    tabName = "cases_by_country",
     fluidRow(
       
       box(
@@ -131,7 +149,7 @@ dashboardBody(
            
            tabPanel(
              width = 12,
-             title = "All Countries and Cases by Epiweek",
+             title = "Countries and Cases by Epiweek",
              p("This graph shows the count of cases from travellers outside NI per epiweek, broken down by countries travelled" ),
              hr(),
              sliderInput(
@@ -141,38 +159,95 @@ dashboardBody(
                min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
                width = "400px"), #Added slider input fo x axis determination on chart
              shinycssloaders::withSpinner(plotlyOutput("all.rag.case.by.week.chart", height = NULL))
-           ),
-
-           tabPanel(
-             title = "Green Countries and Cases by Epiweek",
-             p("This graph shows the count of cases from travellers outside NI per epiweek, broken down by green countries travelled" ),
-             p(strong("Please Note:"), "NA countries omitted from this dataset" ),
-             hr(),
-             sliderInput(
-               inputId = "week3",
-               label = "Please select desired Epiweek range",
-               value = c(0,as.numeric(strftime(Sys.Date(), format = "%V"))),
-               min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
-               width = "400px"), #Added slider input fo x axis determination on chart
-             shinycssloaders::withSpinner(plotlyOutput("green.case.by.week.chart", height = NULL)),
-           ),
+            ),
            
            tabPanel(
-             title = "Amber Countries and Cases by Epiweek",
-             p("This graph shows the count of cases from travellers outside NI per epiweek, broken down by amber countries travelled" ),
-             p(strong("Please Note:"), "NA countries omitted from this dataset" ),
+             width = 12,
+             title = "Percentage of Countries and Cases by Epiweek",
+             p("This graph shows the scale of cases from travellers outside NI per epiweek as a fraction of countries travelled" ),
              hr(),
              sliderInput(
-               inputId = "week4",
+               inputId = "week2",
                label = "Please select desired Epiweek range",
                value = c(0,as.numeric(strftime(Sys.Date(), format = "%V"))),
                min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
                width = "400px"), #Added slider input fo x axis determination on chart
-             shinycssloaders::withSpinner(plotlyOutput("amber.case.by.week.chart", height = NULL)),
-        )
+             shinycssloaders::withSpinner(plotlyOutput("all.rag.case.by.week.chart.per", height = NULL))
+             )
+        # 
+        #    tabPanel(
+        #      title = "Green Countries and Cases by Epiweek",
+        #      p("This graph shows the count of cases from travellers outside NI per epiweek, broken down by green countries travelled" ),
+        #      p(strong("Please Note:"), "NA countries omitted from this dataset" ),
+        #      hr(),
+        #      sliderInput(
+        #        inputId = "week3",
+        #        label = "Please select desired Epiweek range",
+        #        value = c(0,as.numeric(strftime(Sys.Date(), format = "%V"))),
+        #        min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
+        #        width = "400px"), #Added slider input fo x axis determination on chart
+        #      shinycssloaders::withSpinner(plotlyOutput("green.case.by.week.chart", height = NULL)),
+        #    ),
+        #    
+        #    tabPanel(
+        #      title = "Amber Countries and Cases by Epiweek",
+        #      p("This graph shows the count of cases from travellers outside NI per epiweek, broken down by amber countries travelled" ),
+        #      p(strong("Please Note:"), "NA countries omitted from this dataset" ),
+        #      hr(),
+        #      sliderInput(
+        #        inputId = "week4",
+        #        label = "Please select desired Epiweek range",
+        #        value = c(0,as.numeric(strftime(Sys.Date(), format = "%V"))),
+        #        min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
+        #        width = "400px"), #Added slider input fo x axis determination on chart
+        #      shinycssloaders::withSpinner(plotlyOutput("amber.case.by.week.chart", height = NULL)),
+        #)
       )
     )
   ),
+  
+  #--------------DOWNLOADABLE REPORTS--------------
+  tabItem(
+    
+    tabName = "reports",
+    fluidRow(
+      
+      box(
+        width = 12,
+        status = "primary",
+        solidHeader = TRUE,
+        title = "Weekly Reports",
+        p("The tables below show reports for the cases that have travelled outside Northern Ireland yesterday, within the current epiweek, as well as the previous epiweek within the year 2021."),
+      ),
+        
+      tabBox(
+        width = 12,
+        
+        tabPanel(
+          width = 12,
+          title = "Daily Report - Yesterday",
+          downloadButton("downloadData_yesterday", "Download Yesterday Report"),
+          hr(),
+          withSpinner(DT::dataTableOutput("travellers_yesterday"), type = 2)
+        ),
+        
+        tabPanel(
+          width = 12,
+          title = "Weekly Report - Current Epiweek",
+          downloadButton("downloadData_this_week", "Download Current Epiweek Report"),
+          hr(),
+          withSpinner(DT::dataTableOutput("travellers_this_week"), type = 2)
+        ),
+        
+        tabPanel(
+          title = "Weekly Report - Previous Epiweek",
+          downloadButton("downloadData_last_week", "Download Previous Epiweek Report"),
+          hr(),
+          withSpinner(DT::dataTableOutput("travellers_last_week"), type = 2)
+        )
+      )
+     )
+   ),
 
   #--------------TABLES--------------
   tabItem(

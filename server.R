@@ -10,9 +10,10 @@ library(rvest)
 library(rworldmap)
 library(clinUtils)
 library(DT)
-library(googlesheets4)
 library(ggplot2)
 library(plotly)
+
+#detach("package:plyr", unload = TRUE)
 
 
 # Source scripts
@@ -48,6 +49,7 @@ function(input, output, session) {
   green.countries <- lapply(green.countries, str_trim) #Trim whitespace
   green.countries <- as.data.frame(green.countries)
   
+  
   # Web scraping and defining red countries
   
   ## Scrape red country list from NI Direct website
@@ -69,6 +71,7 @@ function(input, output, session) {
   red.countries$status <- "Red"
   red.countries <- lapply(red.countries, str_trim) #Trim whitespace 
   red.countries <- as.data.frame(red.countries)
+  
   
   # Define Common Travel Area
   CTA <- as.data.frame(c("England", "Scotland", "Wales", "Isle of Man", "Ireland", "Guernsey", "Jersey")) 
@@ -94,12 +97,11 @@ function(input, output, session) {
   
   amber.countries$status <- "Amber"
   
-  # Country Status data frame
   
+  # Country Status data frame
   all.countries.status <- rbind(amber.countries, non.amber.countries)
   all.countries.status <- all.countries.status[order(all.countries.status$country), ] 
   current.country.status <- all.countries.status$status
-  
   
   country.status.epi <- data.frame(matrix(NA, nrow = nrow(all.countries.status), ncol = 52))
   
@@ -108,8 +110,8 @@ function(input, output, session) {
   
   country.status.epi$country <- all.countries.status$country # Add countries column
   
-  # Old Country Status lists (Prior to Changes Implemented August 30th 2021)
   
+  # Old Country Status lists (Prior to Changes Implemented August 30th 2021)
   epiweeks.30 <- (paste0("Epiweek", 32:34)) # Define Epiweeks to change
   
   ## Green
@@ -123,7 +125,6 @@ function(input, output, session) {
   ## Amber
   non.amber.countries.30 <- rbind(red.countries.30, green.countries.30, CTA)
   amber.countries.30 <- anti_join(all.countries, non.amber.countries.30, by = "country")
-  
   
   ## Old Country Status data frame
   all.countries.status.30 <- rbind(amber.countries.30, non.amber.countries.30)
@@ -140,7 +141,6 @@ function(input, output, session) {
   
   
   # Old Country Status lists (Prior to Changes Implemented August 8th 2021)
-  
   ## Green
   green.changes <- data.frame("country" = c("Austria", "Germany", "Latvia", "Norway", "Romania", "Slovenia", "Slovakia")) #These countries were added to green list August 8th 2021
   old.green.countries <- anti_join(x = green.countries.30, y = green.changes, by = "country")
@@ -153,7 +153,6 @@ function(input, output, session) {
   old.non.amber.countries <- rbind(old.red.countries, old.green.countries, CTA)
   old.amber.countries <- anti_join(all.countries, old.non.amber.countries, by = "country")
 
-  
   ## Old Country Status data frame
   old.epiweeks <- (paste0("Epiweek", 1:31))
   
@@ -169,48 +168,86 @@ function(input, output, session) {
   ## Add old cases (pre-august 8th, pre epiweek 32) to country.status.epi data frame
   country.status.epi <- replace(country.status.epi, old.epiweeks, old.country.status.epi) 
   
+  
   # Assign this weeks data
   # This will act as the RAG status cache for all countries 
   # Be careful not to overwrite! (check saved .csv if you do)
+  epiweek.number <- as.numeric(strftime(Sys.Date(), format = "%V"))
   
-  current.epiweek <- paste0("Epiweek", strftime(Sys.Date(), format = "%V"))
+  current.epiweek <- paste0("Epiweek", epiweek.number)
+  previous.epiweek <- paste0("Epiweek", epiweek.number-1)
   
+  ## Assign this weeks RAG status
   status.assignment <- country.status.epi %>% 
     dplyr::select(current.epiweek) 
-  status.assignment[,1] <- current.country.status #Assign this weeks RAG status
-  country.status.epi <- replace(country.status.epi, current.epiweek, status.assignment[,1]) #Add it to the main repository
-  country.status.epi$Epiweek35 <- country.status.epi$Epiweek36
+  
+  status.assignment <- current.country.status 
+  
+  ## Cache data frame
+  country.status.epi$Epiweek35 <- current.country.status #Fix (next week)
+  country.status.epi$Epiweek36 <- current.country.status #Fix
   country.status.epi.cache <- country.status.epi
   
-  country.status.epi$Epiweek35 <- country.status.epi$Epiweek36
+  ## Add new week to the main repository
+  country.status.epi.cache <- replace(country.status.epi, current.epiweek, status.assignment) 
   
-  # Pivot Countries
+  ## Pivot the data frames
   pivot.countries <- pivot_longer(country.status.epi.cache, !country, names_to = "Epiweek", values_to = "Status")
   
   
   # Backup Data Frame
-  
   ## CSV
   write.csv(country.status.epi.cache, "country.status.epi.csv")
 
-  # Define all cases
+  
+  # Define all cases for comparison
   Allcases <- cases %>% 
     filter(CreatedOn >= "2021-01-04" & CreatedOn <= Sys.Date()+1) %>% 
     mutate(EpiweekCreated = paste0("Epiweek", strftime(CreatedOn, format = "%V")))
   
-  # Define travellers
   
+  # Monthly Data frame
+  country.status.mon <- data.frame(matrix(NA, nrow = nrow(all.countries.status), ncol = 12))
+  colnames(country.status.mon) <- month.name
+  
+  country.status.mon[ , c(1:7)] <- country.status.epi$Epiweek1
+  country.status.mon[ , 8] <- country.status.epi$Epiweek33
+  country.status.mon[ , 9] <- country.status.epi$Epiweek36
+  country.status.mon[ , 10] <- country.status.epi$Epiweek40
+  country.status.mon[ , 11] <- country.status.epi$Epiweek44
+  country.status.mon[ , 12] <- country.status.epi$Epiweek49
+  
+  country.status.mon$country <- all.countries.status$country # Add countries column
+  
+  # Define travellers
   ## Make data frame
   travellers <- locations %>%
     filter(TypeOfPlace == "Travel outside Northern Ireland") %>%
     left_join(collectclosecontacts, by = c("CollectCallId" = "Id")) %>%
     left_join(cases, by = "CaseNumber") %>%
-    dplyr::select(CountriesVisited.x, WhenDidYouLeaveNorthernIreland, WhenDidYouReturnToNorthernIreland, CaseNumber, FirstName, LastName, Gender.x, CreatedOn) %>% 
-    filter(WhenDidYouReturnToNorthernIreland >= "2021-01-04" & WhenDidYouReturnToNorthernIreland <= Sys.Date()) %>% 
+    dplyr::select(CountriesVisited.x, WhenDidYouLeaveNorthernIreland, WhenDidYouReturnToNorthernIreland, DateOfOnset, CaseNumber, Gender.x, AgeAtPositiveResult,
+                  CreatedOn, AdditionalTravelInformation, MoreDetail) %>% 
+    filter(WhenDidYouReturnToNorthernIreland >= "2021-01-04" & WhenDidYouReturnToNorthernIreland <= Sys.Date()+1) %>% 
     mutate(EpiweekReturned = paste0("Epiweek", strftime(WhenDidYouReturnToNorthernIreland, format = "%V"))) %>% 
-    mutate(EpiweekCreated = paste0("Epiweek", strftime(CreatedOn, format = "%V"))) %>% 
-    drop_na(CountriesVisited.x) 
-
+    mutate(EpiweekCreated = paste0("Epiweek", strftime(CreatedOn, format = "%V"))) # %>% 
+    #drop_na(CountriesVisited.x) 
+  
+  ## Tidying
+  travellers$EpiweekCreated <-  sub('Epiweek0', 'Epiweek', travellers$EpiweekCreated) #Remove the 0 value from single digit Epiweeks
+  travellers$EpiweekReturned <-  sub('Epiweek0', 'Epiweek', travellers$EpiweekReturned)
+  
+  travellers$WhenDidYouLeaveNorthernIreland <- strptime(travellers$WhenDidYouLeaveNorthernIreland, format = "%Y-%m-%d")
+  travellers$WhenDidYouReturnToNorthernIreland <- strptime(travellers$WhenDidYouReturnToNorthernIreland, format = "%Y-%m-%d")
+  travellers$DateOfOnset <- strptime(travellers$DateOfOnset, format = "%Y-%m-%d")
+  
+  #travellers$CreatedOn <- strptime(travellers$CreatedOn, format = "%Y-%m-%d")
+  travellers$CreatedOn <- as.Date(travellers$CreatedOn, format = "%Y-%m-%d")
+  
+  travellers$WhenDidYouLeaveNorthernIreland <- format(travellers$WhenDidYouLeaveNorthernIreland, format = "%d-%m-%Y")
+  travellers$WhenDidYouReturnToNorthernIreland <- format(travellers$WhenDidYouReturnToNorthernIreland, format = "%d-%m-%Y")
+  travellers$DateOfOnset <- format(travellers$DateOfOnset, format = "%d-%m-%Y")
+  #travellers$CreatedOn <- format(travellers$CreatedOn, format = "%d-%m-%Y")
+  
   ## Tidy pre drop down data
   travellers$CountriesVisited.x <- lapply(travellers$CountriesVisited.x, str_trim)
   
@@ -703,6 +740,8 @@ function(input, output, session) {
   travellers$CountriesVisited.x <- gsub("Republic of Ireland", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("republic of ireland", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("REPUBLIC OF IRELAND", "Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("REPUBLIC OF iRELAND", "Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Republci of Ireland", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("Rep. Of Ireland", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("Dublin", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("County Donegal Southern Ireland", "Ireland", travellers$CountriesVisited.x)
@@ -805,9 +844,45 @@ function(input, output, session) {
   travellers$CountriesVisited.x <- gsub("Derry", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("England, Scotland", "Scotland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("majorca", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Athens, Cyprus", "Greece, Cyprus", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Berlin, Amsterdam and Ireland-all connecting flights commencing 28/5/21. Employed via German Government and currently residing in Bangor. Self isolating in Bangor", "Germany, Netherlands", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Crete", "Greece", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("United Kingdom\r\nCity - England", "England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("United States Colorado and New Mexico", "United States", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("wales", "Wales", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain, Spain", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain Spain", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain magluf   with jet 2 hoildays  transfer and hotel", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("spain", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Scotland - Edinburgh", "Scotland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Scotland - Belfast- Edinburgh", "Scotland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Scotland - Inverness", "Scotland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Scotland - work in Scotland Monday to Friday weekly. Travel to Edinburgh Monday AM, return Friday PM", "Scotland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Scotland - Inverness", "Scotland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("scotland \nEngland", "Scotland, England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Scotland \nEngland", "Scotland, England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Scotland \r\nEngland\r\nWales", "Scotland, England, Wales", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Scotland spean bridge", "Scotland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("scotland\nEngland", "Scotland, England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Scotland, Edinburgh", "Scotland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("scotland, England", "Scotland, England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Scotland. Student in Glasgow University", "Scotland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain-Alcudia", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain - MALLORCA", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain  magluf  jet 2 hoildays hotel and transfer to hotel package", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain (Malaga)", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain 1 month", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain Alcudia\nfrom 10th-20th July 2021 inclusive. No information about flights or accommodation available as son booked everything.", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain and England", "Spain, England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain mainland", "Spain", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain\nFrance\nIreland", "Spain, France, Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Spain (Malaga)", "Spain", travellers$CountriesVisited.x)
+  
+  
   
   ### COUNTRY TIDY END ####
   
+  ## Country tallies
   country.count <- as.data.frame(table(travellers$CountriesVisited.x))
   country.count <- arrange(country.count, desc(Freq))
   #colnames(country.count) <- c("country", "count")
@@ -829,7 +904,7 @@ function(input, output, session) {
   travellers.status <- left_join(travellers, pivot.countries, by = c("EpiweekReturned" = "Epiweek", "CountriesVisited.x" = "country"))
   
   
-  ####### HOME #######
+####### HOME ######
   
   # InfoBoxes
   
@@ -933,22 +1008,24 @@ function(input, output, session) {
     DT::datatable(topten, options = list(pageLength = 10))
   })
   
-####### TOTAL CASES BY EPIWEEK  #######
+####### CASES BY RAG  #######
+  
+  # By Epiweek
   
   output$case.by.week.chart <- renderPlotly({
     
-    travellers.status.plot <- travellers.status %>% 
+    travellers.status.week.plot <- travellers.status %>% 
       select(EpiweekReturned, Status) 
 
-    travellers.status.plot$EpiweekReturned <- gsub("Epiweek"," ", as.character(travellers.status.plot$EpiweekReturned))
-    travellers.status.plot$EpiweekReturned <- as.numeric(travellers.status.plot$EpiweekReturned)
-    travellers.status.plot$Status <- as.factor(travellers.status.plot$Status)
-    travellers.status.plot$Status <- factor(travellers.status.plot$Status, levels=c("Red", "Amber", "Green", "NA"))
+    travellers.status.week.plot$EpiweekReturned <- gsub("Epiweek"," ", as.character(travellers.status.week.plot$EpiweekReturned))
+    travellers.status.week.plot$EpiweekReturned <- as.numeric(travellers.status.week.plot$EpiweekReturned)
+    travellers.status.week.plot$Status <- as.factor(travellers.status.week.plot$Status)
+    travellers.status.week.plot$Status <- factor(travellers.status.week.plot$Status, levels=c("Red", "Amber", "Green", "NA"))
     
-    case.by.week.chart <- ggplot(travellers.status.plot, aes(EpiweekReturned)) +
+    case.by.week.chart <- ggplot(travellers.status.week.plot, aes(EpiweekReturned)) +
       geom_bar(aes(fill=Status)) +
       scale_fill_manual(values = c("firebrick", "goldenrod", "seagreen"), name = "RAG Status") +
-      scale_x_continuous(limits =  c(input$week[1], input$week[2]), breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) + #Adjusting the size of graph in the tab 
+      scale_x_continuous(limits =  c(input$week[1], input$week[2]), breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) +
       theme_bw()
     
     case.by.week.chart <- ggplotly(case.by.week.chart) %>% 
@@ -957,13 +1034,50 @@ function(input, output, session) {
     case.by.week.chart
   })
   
-####### CASES BY EPIWEEK BY RAG STATUS  #######
+  # By Month
   
-  # All Countries 
+  #detach("package:plyr", unload = TRUE)
+  
+  output$case.by.month.chart <- renderPlotly({
+    
+    travellers.status.mon.plot <- travellers.status %>% 
+      select(CreatedOn, Status) %>% 
+      filter(CreatedOn >= "2021-01-01" & CreatedOn <= Sys.Date()+1) %>%
+      dplyr::group_by(month = lubridate::floor_date(as.Date(CreatedOn, format = "%d-%m"), "month")) %>% 
+      dplyr::mutate(Green = if_else(Status == "Green", 1, 0)) %>% 
+      dplyr::mutate(Amber = if_else(Status == "Amber", 1, 0)) %>% 
+      dplyr::mutate(Red = if_else(Status == "Red", 1, 0)) %>% 
+      dplyr::mutate("NA" = if_else(is.na(Status), 1, 0)) %>%
+      dplyr::summarise_at(c("Green", "Amber", "Red", "NA"), sum, na.rm = TRUE) %>% 
+      tidyr::pivot_longer(cols = c("Green", "Amber", "Red", "NA")) %>% 
+      filter(month >= "2021-01-01" & month <= Sys.Date()+1)
+    
+    travellers.status.mon.plot$name <- as.factor(travellers.status.mon.plot$name)
+    travellers.status.mon.plot$name <- factor(travellers.status.mon.plot$name, levels=c("Red", "Amber", "Green", "NA"))
+    
+    
+    case.by.month.plot <- ggplot(travellers.status.mon.plot, aes(fill = name, x = month, y = value)) +
+      geom_bar(position="stack", stat="identity") +
+      scale_fill_manual(values = c("firebrick", "goldenrod", "seagreen", "grey45"), name = "RAG Status") +
+      scale_x_date(date_labels = "%m-%Y", breaks = "1 month") +
+      theme_bw()
+    
+    case.by.month.plot <- ggplotly(case.by.month.plot) %>% 
+      layout(xaxis = list(tickangle = 45))
+    
+    case.by.month.plot
+  })
+  
+####### CASES BY COUNTRY #######
+  
+  # All Countries by Epiweek
   output$all.rag.case.by.week.chart <- renderPlotly({
     
     country.plot <- travellers.status %>% 
       select(CountriesVisited.x, EpiweekReturned) 
+    
+    
+    
     country.count <- as.data.frame(table(travellers$CountriesVisited.x))
     country.count <- arrange(country.count, desc(Freq))
     
@@ -984,110 +1098,256 @@ function(input, output, session) {
     country.plot$EpiweekReturned <- gsub("Epiweek"," ", as.character(country.plot$EpiweekReturned))
     country.plot$EpiweekReturned <- as.numeric(country.plot$EpiweekReturned)
     
-    green.countries.by.week <- ggplot(country.plot, aes(EpiweekReturned)) +
+    all.countries.by.week <- ggplot(country.plot, aes(EpiweekReturned)) +
       geom_bar(aes(fill=country), position = position_stack(reverse = TRUE)) +
+      scale_fill_manual(values = c("seagreen", "red3", "royalblue", "gold", "maroon", 
+                                   "springgreen4", "red", "olivedrab", "skyblue", "navy", "wheat4"), name = "Country") +
       scale_x_continuous(limits =  c(input$week2[1], input$week2[2]), breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) + #Adjusting the size of graph in the tab 
       theme_bw()
     
-    green.countries.by.week <- ggplotly(green.countries.by.week) %>% 
+    all.countries.by.week <- ggplotly(all.countries.by.week) %>% 
       layout(xaxis = list(tickangle = 45))
     
-    green.countries.by.week
+    all.countries.by.week
   })
   
-  # Green Countries 
-    output$green.case.by.week.chart <- renderPlotly({
-      
-    country.count.green <- travellers.status %>% 
-                           filter(Status=="Green")
+  # All Countries Percentage by Epiweeek
+  output$all.rag.case.by.week.chart.per <- renderPlotly({
     
-    country.count.green <- as.data.frame(table(country.count.green$CountriesVisited.x))
-    country.count.green <- arrange(country.count.green, desc(Freq))
-    topten.green <- head(country.count.green, 10)
-    colnames(topten.green) <- c("country", "count")
-    topten.green <- left_join(topten.green, all.countries.status, by = "country")
-    colnames(topten.green) <- c("Country", "Count", "Status")
-    
-    green.country.plot <- travellers.status %>% 
-      filter(Status == "Green") %>% 
+    country.plot <- travellers.status %>% 
       select(CountriesVisited.x, EpiweekReturned) 
     
-    ## Green Top Ten   
-    green.country.plot$country <- green.country.plot$CountriesVisited.x
-    green.country.plot$country[green.country.plot$country != "Ireland" &
-                               green.country.plot$country != "England" &
-                               green.country.plot$country != "Scotland" &
-                               green.country.plot$country != "Wales" &
-                               green.country.plot$country != "Jersey" & 
-                               green.country.plot$country != "Bulgaria" &
-                               green.country.plot$country != "Croatia" &
-                               green.country.plot$country != "Malta" &
-                               green.country.plot$country != "Slovakia" &
-                               green.country.plot$country != "Germany"] <- "Other" #Could probably use %in% too
+    country.plot$country <- country.plot$CountriesVisited.x
+    country.plot$country[country.plot$country != "Ireland" &
+                           country.plot$country != "England" &
+                           country.plot$country != "Scotland" &
+                           country.plot$country != "Spain" & 
+                           country.plot$country != "Portugal" &
+                           country.plot$country != "Wales" &
+                           country.plot$country != "Poland" &
+                           country.plot$country != "India" &
+                           country.plot$country != "Jersey" &
+                           country.plot$country != "United States"] <- "Other" #Top Ten. Could use %in%
     
+    country.plot$country <- factor(country.plot$country, levels=c("Ireland", "England", "Scotland", "Spain", "Portugal", "Wales", "Poland", "India", "Jersey", "United States", "Other"))
     
-    green.country.plot$country <- factor(green.country.plot$country, levels=c("Ireland", "England", "Scotland", "Wales", "Jersey", "Bulgaria", "Croatia", "Malta", "Slovakia", "Germany", "Other"))
+    country.plot$EpiweekReturned <- gsub("Epiweek"," ", as.character(country.plot$EpiweekReturned))
+    country.plot$EpiweekReturned <- as.numeric(country.plot$EpiweekReturned)
     
-      green.country.plot$EpiweekReturned <- gsub("Epiweek"," ", as.character(green.country.plot$EpiweekReturned))
-      green.country.plot$EpiweekReturned <- as.numeric(green.country.plot$EpiweekReturned)
-    
-    green.countries.by.week <- ggplot(green.country.plot, aes(EpiweekReturned)) +
-      geom_bar(aes(fill=country), position = position_stack(reverse = TRUE)) +
-      scale_x_continuous(limits =  c(input$week3[1], input$week3[2]), breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) + #Adjusting the size of graph in the tab 
+    all.countries.by.week.per <- ggplot(country.plot, aes(EpiweekReturned)) +
+      geom_bar(aes(fill=country), position = position_fill(reverse = TRUE)) +
+      scale_fill_manual(values = c("seagreen", "red3", "royalblue", "gold", "maroon", 
+                                   "springgreen4", "red", "olivedrab", "skyblue", "navy", "wheat4"), name = "Country") +
+     scale_x_continuous(limits =  c(input$week2[1], input$week2[2]), breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) + #Adjusting the size of graph in the tab 
       theme_bw()
     
-    green.countries.by.week <- ggplotly(green.countries.by.week) %>% 
+    all.countries.by.week.per <- ggplotly(all.countries.by.week.per) %>% 
       layout(xaxis = list(tickangle = 45))
     
-   green.countries.by.week
+    all.countries.by.week.per
   })
+  
+  # All Countries by Month
+  output$all.rag.case.by.mon.chart <- renderPlotly({
     
-  # Amber Countries 
-    output$amber.case.by.week.chart <- renderPlotly({
-      
-      country.count.amber <- travellers.status %>% 
-        filter(Status=="Amber")
-      
-      country.count.amber <- as.data.frame(table(country.count.amber$CountriesVisited.x))
-      country.count.amber <- arrange(country.count.amber, desc(Freq))
-      topten.amber <- head(country.count.amber, 10)
-      colnames(topten.amber) <- c("country", "count")
-      topten.amber <- left_join(topten.amber, all.countries.status, by = "country")
-      colnames(topten.amber) <- c("Country", "Count", "Status")
-      
-      amber.country.plot <- travellers.status %>% 
-        filter(Status == "Amber") %>% 
-        select(CountriesVisited.x, EpiweekReturned) 
-      
-      ## Amber Top Ten   
-      amber.country.plot$country <- amber.country.plot$CountriesVisited.x
-      amber.country.plot$country[amber.country.plot$country != "Spain" &
-                                   amber.country.plot$country != "Portugal" &
-                                   amber.country.plot$country != "Poland" &
-                                   amber.country.plot$country != "United States" &
-                                   amber.country.plot$country != "France" & 
-                                   amber.country.plot$country != "Greece" &
-                                   amber.country.plot$country != "India" &
-                                   amber.country.plot$country != "Ukraine" &
-                                   amber.country.plot$country != "Italy" &
-                                   amber.country.plot$country != "Morocco"] <- "Other" #Could probably use %in% too
-      
-      
-      amber.country.plot$country <- factor(amber.country.plot$country, levels=c("Spain", "Portugal", "Poland", "United States", "France", "Greece", "India", "Ukraine", "Italy", "Morocco", "Other"))
-      
-      amber.country.plot$EpiweekReturned <- gsub("Epiweek"," ", as.character(amber.country.plot$EpiweekReturned))
-      amber.country.plot$EpiweekReturned <- as.numeric(amber.country.plot$EpiweekReturned)
-      
-      amber.countries.by.week <- ggplot(amber.country.plot, aes(EpiweekReturned)) +
-        geom_bar(aes(fill=country), position = position_stack(reverse = TRUE)) +
-        scale_x_continuous(limits =  c(input$week4[1], input$week4[2]), breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) + #Adjusting the size of graph in the tab
-        theme_bw()
-      
-      amber.countries.by.week <- ggplotly(amber.countries.by.week) %>% 
-        layout(xaxis = list(tickangle = 45))
-      
-      amber.countries.by.week
-    })
+    country.plot.mon <- travellers.status %>% 
+      select(CreatedOn, CountriesVisited.x) 
+    
+    country.plot.mon$CountriesVisited.x <- country.plot$CountriesVisited.x
+    country.plot.mon$CountriesVisited.x[country.plot.mon$CountriesVisited.x != "Ireland" &
+                           country.plot.mon$CountriesVisited.x != "England" &
+                           country.plot.mon$CountriesVisited.x != "Scotland" &
+                           country.plot.mon$CountriesVisited.x != "Spain" & 
+                           country.plot.mon$CountriesVisited.x != "Portugal" &
+                           country.plot.mon$CountriesVisited.x != "Wales" &
+                           country.plot.mon$CountriesVisited.x != "Poland" &
+                           country.plot.mon$CountriesVisited.x != "India" &
+                           country.plot.mon$CountriesVisited.x != "Jersey" &
+                           country.plot.mon$CountriesVisited.x != "United States"] <- "Other" #Top Ten. Could use %in%
+    
+    country.plot.mon <- country.plot.mon %>%  
+      filter(CreatedOn >= "2021-01-01" & CreatedOn <= Sys.Date()+1) %>%
+      dplyr::group_by(month = lubridate::floor_date(as.Date(CreatedOn, format = "%d-%m"), "month")) %>% 
+      dplyr::mutate(Ireland = if_else(CountriesVisited.x == "Ireland", 1, 0)) %>% 
+      dplyr::mutate(England = if_else(CountriesVisited.x == "England", 1, 0)) %>% 
+      dplyr::mutate(Scotland = if_else(CountriesVisited.x == "Scotland", 1, 0)) %>%
+      dplyr::mutate(Portugal = if_else(CountriesVisited.x == "Portugal", 1, 0)) %>%
+      dplyr::mutate(Wales = if_else(CountriesVisited.x == "Wales", 1, 0)) %>%
+      dplyr::mutate(Poland = if_else(CountriesVisited.x == "Poland", 1, 0)) %>%
+      dplyr::mutate(India = if_else(CountriesVisited.x == "India", 1, 0)) %>%
+      dplyr::mutate(Jersey = if_else(CountriesVisited.x == "Jersey", 1, 0)) %>%
+      dplyr::mutate(UnitedStates = if_else(CountriesVisited.x == "United States", 1, 0)) %>%
+      dplyr::mutate(Other = if_else(CountriesVisited.x == "Other", 1, 0)) %>%
+      dplyr::mutate("NA" = if_else(is.na(CountriesVisited.x), 1, 0)) %>%                  #Could make df and use %in%
+      dplyr::summarise_at(c("Ireland", "England", "Scotland", "Scotland", "Portugal", "Wales", "Poland", "India", "Jersey", "UnitedStates", "Other", "NA"),
+                          sum, na.rm = TRUE) %>% 
+      tidyr::pivot_longer(cols = c("Ireland", "England", "Scotland", "Scotland", "Portugal", "Wales", "Poland", "India", "Jersey", "UnitedStates", "Other", "NA")) %>% 
+      filter(month >= "2021-01-01" & month <= Sys.Date()+1)
+    
+    country.plot.mon$name <- factor(country.plot.mon$name, levels=c("Ireland", "England", "Scotland", "Spain", "Portugal", "Wales", "Poland", "India", "Jersey", "United States", "Other", "NA"))
+    
+    all.countries.by.month <- ggplot(country.plot.mon, aes(fill = name, x = month, y = value)) +
+      geom_bar(stat="identity", position = position_stack(reverse = TRUE)) +
+      scale_fill_manual(values = c("seagreen", "red3", "royalblue", "gold", "maroon", 
+                                   "springgreen4", "red", "olivedrab", "skyblue", "navy", "wheat4", "grey45"), name = "Country") +
+      #scale_x_continuous(limits =  c(input$week2[1], input$week2[2]), breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) + #Adjusting the size of graph in the tab 
+      theme_bw()
+    
+    all.countries.by.month <- ggplotly(all.countries.by.month) %>% 
+      layout(xaxis = list(tickangle = 45))
+    
+    all.countries.by.month
+  })
+  
+  #### OLD CODE #####
+  # # Green Countries 
+  #   output$green.case.by.week.chart <- renderPlotly({
+  #     
+  #   country.count.green <- travellers.status %>% 
+  #                          filter(Status=="Green")
+  #   
+  #   country.count.green <- as.data.frame(table(country.count.green$CountriesVisited.x))
+  #   country.count.green <- arrange(country.count.green, desc(Freq))
+  #   topten.green <- head(country.count.green, 10)
+  #   colnames(topten.green) <- c("country", "count")
+  #   topten.green <- left_join(topten.green, all.countries.status, by = "country")
+  #   colnames(topten.green) <- c("Country", "Count", "Status")
+  #   
+  #   green.country.plot <- travellers.status %>% 
+  #     filter(Status == "Green") %>% 
+  #     select(CountriesVisited.x, EpiweekReturned) 
+  #   
+  #   ## Green Top Ten   
+  #   green.country.plot$country <- green.country.plot$CountriesVisited.x
+  #   green.country.plot$country[green.country.plot$country != "Ireland" &
+  #                              green.country.plot$country != "England" &
+  #                              green.country.plot$country != "Scotland" &
+  #                              green.country.plot$country != "Wales" &
+  #                              green.country.plot$country != "Jersey" & 
+  #                              green.country.plot$country != "Bulgaria" &
+  #                              green.country.plot$country != "Croatia" &
+  #                              green.country.plot$country != "Malta" &
+  #                              green.country.plot$country != "Slovakia" &
+  #                              green.country.plot$country != "Germany"] <- "Other" #Could probably use %in% too
+  #   
+  #   
+  #   green.country.plot$country <- factor(green.country.plot$country, levels=c("Ireland", "England", "Scotland", "Wales", "Jersey", "Bulgaria", "Croatia", "Malta", "Slovakia", "Germany", "Other"))
+  #   
+  #     green.country.plot$EpiweekReturned <- gsub("Epiweek"," ", as.character(green.country.plot$EpiweekReturned))
+  #     green.country.plot$EpiweekReturned <- as.numeric(green.country.plot$EpiweekReturned)
+  #   
+  #   green.countries.by.week <- ggplot(green.country.plot, aes(EpiweekReturned)) +
+  #     geom_bar(aes(fill=country), position = position_stack(reverse = TRUE)) +
+  #     scale_x_continuous(limits =  c(input$week3[1], input$week3[2]), breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) + #Adjusting the size of graph in the tab 
+  #     theme_bw()
+  #   
+  #   green.countries.by.week <- ggplotly(green.countries.by.week) %>% 
+  #     layout(xaxis = list(tickangle = 45))
+  #   
+  #  green.countries.by.week
+  # })
+  #   
+  # # Amber Countries 
+  #   output$amber.case.by.week.chart <- renderPlotly({
+  #     
+  #     country.count.amber <- travellers.status %>% 
+  #       filter(Status=="Amber")
+  #     
+  #     country.count.amber <- as.data.frame(table(country.count.amber$CountriesVisited.x))
+  #     country.count.amber <- arrange(country.count.amber, desc(Freq))
+  #     topten.amber <- head(country.count.amber, 10)
+  #     colnames(topten.amber) <- c("country", "count")
+  #     topten.amber <- left_join(topten.amber, all.countries.status, by = "country")
+  #     colnames(topten.amber) <- c("Country", "Count", "Status")
+  #     
+  #     amber.country.plot <- travellers.status %>% 
+  #       filter(Status == "Amber") %>% 
+  #       select(CountriesVisited.x, EpiweekReturned) 
+  #     
+  #     ## Amber Top Ten   
+  #     amber.country.plot$country <- amber.country.plot$CountriesVisited.x
+  #     amber.country.plot$country[amber.country.plot$country != "Spain" &
+  #                                  amber.country.plot$country != "Portugal" &
+  #                                  amber.country.plot$country != "Poland" &
+  #                                  amber.country.plot$country != "United States" &
+  #                                  amber.country.plot$country != "France" & 
+  #                                  amber.country.plot$country != "Greece" &
+  #                                  amber.country.plot$country != "India" &
+  #                                  amber.country.plot$country != "Ukraine" &
+  #                                  amber.country.plot$country != "Italy" &
+  #                                  amber.country.plot$country != "Morocco"] <- "Other" #Could probably use %in% too
+  #     
+  #     
+  #     amber.country.plot$country <- factor(amber.country.plot$country, levels=c("Spain", "Portugal", "Poland", "United States", "France", "Greece", "India", "Ukraine", "Italy", "Morocco", "Other"))
+  #     
+  #     amber.country.plot$EpiweekReturned <- gsub("Epiweek"," ", as.character(amber.country.plot$EpiweekReturned))
+  #     amber.country.plot$EpiweekReturned <- as.numeric(amber.country.plot$EpiweekReturned)
+  #     
+  #     amber.countries.by.week <- ggplot(amber.country.plot, aes(EpiweekReturned)) +
+  #       geom_bar(aes(fill=country), position = position_stack(reverse = TRUE)) +
+  #       scale_x_continuous(limits =  c(input$week4[1], input$week4[2]), breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) + #Adjusting the size of graph in the tab
+  #       theme_bw()
+  #     
+  #     amber.countries.by.week <- ggplotly(amber.countries.by.week) %>% 
+  #       layout(xaxis = list(tickangle = 45))
+  #     
+  #     amber.countries.by.week
+  #   })
+  #### OLD CODE END ####
+
+####### REPORT DOWNLOADS  #######
+  system.date <- as.Date(Sys.Date(), format = "%d-%m-%Y")
+  
+  # Previous Day
+  previous.day.report <- travellers.status %>% 
+    filter(CreatedOn == Sys.Date()-1) %>% 
+    dplyr::select(-c(EpiweekCreated, EpiweekReturned))
+  
+  output$travellers_yesterday = DT::renderDataTable({
+    DT::datatable(previous.day.report, options = list(scrollX = TRUE, pageLength = 50))
+  })
+  
+  ## Downloadable csv of selected dataset 
+  output$downloadData_yesterday <- downloadHandler(
+    filename = "DataPreviousDay.csv",
+    content = function(file) {
+      write.csv(previous.day.report, file, row.names = FALSE)
+    }
+  )
+  
+  # Current Week
+  current.week.report <- travellers.status %>% 
+    filter(EpiweekCreated == current.epiweek) %>% 
+    select(-c(EpiweekCreated, EpiweekReturned))
+  
+  output$travellers_this_week = DT::renderDataTable({
+    DT::datatable(current.week.report, options = list(scrollX = TRUE, pageLength = 50))
+  })
+  
+  ## Downloadable csv of selected dataset 
+  output$downloadData_this_week <- downloadHandler(
+    filename = "DataCurrentEpiweek.csv",
+    content = function(file) {
+      write.csv(current.week.report, file, row.names = FALSE)
+    }
+  )
+  
+  # Previous Week
+  previous.week.report <- travellers.status %>% 
+    filter(EpiweekCreated == previous.epiweek) %>% 
+    select(-c(EpiweekCreated, EpiweekReturned))
+  
+  output$travellers_last_week = DT::renderDataTable({
+    DT::datatable(previous.week.report, options = list(scrollX = TRUE, pageLength = 50))
+  })
+  
+  ## Downloadable csv of selected dataset
+  output$downloadData_last_week <- downloadHandler(
+    filename = "DataPreviousEpiweek.csv",
+    content = function(file) {
+      write.csv(previous.week.report, file, row.names = FALSE)
+    }
+  )
   
   
 ####### STATUS LIST  ####### 
