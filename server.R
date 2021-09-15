@@ -184,7 +184,7 @@ function(input, output, session) {
   status.assignment <- current.country.status 
   
   ## Cache data frame
-  country.status.epi$Epiweek35 <- current.country.status #Fix (next week)
+  country.status.epi$Epiweek35 <- current.country.status #Fix (should be able to remove this next week)
   country.status.epi$Epiweek36 <- current.country.status #Fix
   country.status.epi.cache <- country.status.epi
   
@@ -722,6 +722,7 @@ function(input, output, session) {
   travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Visited Edinburgh for a wedding on 23/07/2021.\r\nI have had notification that I was in contact with someone there with a positive covid result."] <- "Scotland"
   travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Majorca, Spain"] <- "Spain"
   travellers$CountriesVisited.x[travellers$CountriesVisited.x == "United Arab Emirate"] <- "United Arab Emirates"
+  travellers$CountriesVisited.x[travellers$CountriesVisited.x == "case has travelled form Hydrabad in India and has travelled through bangalore to England . He then travelled onto Belfast City Airport"] <- "India"
   travellers$CountriesVisited.x <- gsub("ROI", "Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("Balearic Islands", "Spain", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("USA", "United States", travellers$CountriesVisited.x)
@@ -877,7 +878,17 @@ function(input, output, session) {
   travellers$CountriesVisited.x <- gsub("Spain mainland", "Spain", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("Spain\nFrance\nIreland", "Spain, France, Ireland", travellers$CountriesVisited.x)
   travellers$CountriesVisited.x <- gsub("Spain (Malaga)", "Spain", travellers$CountriesVisited.x)
-  
+  travellers$CountriesVisited.x <- gsub("Belarus, England", "Belarus", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Donegal - 4 Cnocglass, Fanad\nby car with famlly members", "Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Donegal in Ireland", "Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Donegal Ireland", "Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Donegal\nCreeslough", "Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("Downings Republic of ireland", "Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("dublin Ireland", "Ireland", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("England -  England", "England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("England - England", "England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("England - Manchester", "England", travellers$CountriesVisited.x)
+  travellers$CountriesVisited.x <- gsub("England   cornwell stayed at self-catering cottage", "England", travellers$CountriesVisited.x)
   
   
   ### COUNTRY TIDY END ####
