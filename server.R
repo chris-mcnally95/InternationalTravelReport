@@ -176,29 +176,44 @@ function(input, output, session) {
   
   current.epiweek <- paste0("Epiweek", epiweek.number)
   previous.epiweek <- paste0("Epiweek", epiweek.number-1)
+  two.epiweeks.ago <- paste0("Epiweek", epiweek.number-2)
   
-  ## Assign this weeks RAG status
-  status.assignment <- country.status.epi %>% 
+  ## Assign week RAG status
+  current.status.assignment <- country.status.epi %>% 
     dplyr::select(current.epiweek) 
+  status.assignment <- current.country.status
   
-  status.assignment <- current.country.status 
+  one.week.ago.assignment <- country.status.epi %>% 
+    dplyr::select(previous.epiweek)
+  one.week.status.assignment <- current.country.status
   
-  ## Cache data frame
-  country.status.epi$Epiweek35 <- current.country.status #Fix (should be able to remove this next week)
-  country.status.epi$Epiweek36 <- current.country.status #Fix
-  country.status.epi.cache <- country.status.epi
+  two.week.ago.assignment <- country.status.epi %>% 
+    dplyr::select(two.epiweeks.ago)
+  two.week.status.assignment <- current.country.status
   
   ## Add new week to the main repository
-  country.status.epi.cache <- replace(country.status.epi, current.epiweek, status.assignment) 
+  country.status.epi <- replace(country.status.epi, current.epiweek, status.assignment) 
   
-  ## Pivot the data frames
-  pivot.countries <- pivot_longer(country.status.epi.cache, !country, names_to = "Epiweek", values_to = "Status")
+  ## Add fix for most previous epiweek not updating
+  if(all(status.assignment == two.week.status.assignment)) {
+              country.status.epi <- replace(country.status.epi, previous.epiweek, status.assignment)
+  } else {
+              country.status.epi <- replace(country.status.epi, previous.epiweek, two.week.status.assignment)
+  }
   
+  ## Temporary Fix for Older Epiweeks
+  country.status.epi$Epiweek35 <- country.status.epi$Epiweek37
+  country.status.epi$Epiweek36 <- country.status.epi$Epiweek37
+  
+  ## Cache data frame
+  country.status.epi.cache <- country.status.epi
   
   # Backup Data Frame
   ## CSV
   write.csv(country.status.epi.cache, "country.status.epi.csv")
-
+  
+  ## Pivot the data frames
+  pivot.countries <- pivot_longer(country.status.epi.cache, !country, names_to = "Epiweek", values_to = "Status")
   
   # Define all cases for comparison
   Allcases <- cases %>% 
