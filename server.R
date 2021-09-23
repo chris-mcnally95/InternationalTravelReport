@@ -489,7 +489,7 @@ function(input, output, session) {
   # Previous 2 Weeks
   
   output$travellers_two_week = DT::renderDataTable({
-    DT::datatable(previous.week.report,
+    DT::datatable(last2.epiweeks.report,
                   filter = 'top',
                   options = list(
                     dom = 'lBftrip',
@@ -502,7 +502,7 @@ function(input, output, session) {
   })
   
   ## Downloadable csv of selected dataset
-  output$downloadData_last_week <- downloadHandler(
+  output$downloadData_last_Two_weeks <- downloadHandler(
     filename = "DataPreviousTwoEpiweeks.csv",
     content = function(file) {
       write.csv(last2.epiweeks.report, file, row.names = FALSE)
@@ -526,8 +526,8 @@ function(input, output, session) {
   })
   
   ## Downloadable csv of selected dataset
-  output$downloadData_last_week <- downloadHandler(
-    filename = "Cumulative travel.csv",
+  output$downloadData_cumulative <- downloadHandler(
+    filename = "Cumulativetravel.csv",
     content = function(file) {
       write.csv(culmulative.report, file, row.names = FALSE)
     }

@@ -973,7 +973,26 @@ culmulative.report <- travellers.status %>%
   dplyr::select(-c(EpiweekCreated, EpiweekReturned)) %>%
   arrange(CountriesVisited)
 
-#culmulativereport_nested <- culmulative.report %>% 
-# group_by(CountriesVisited) %>% 
-#nest()
 
+#to find outlying country combinations
+culmulativereport_nested <- culmulative.report %>%
+group_by(CountriesVisited) %>%
+nest()
+
+
+##Trying to split people who've traveled more than one place - take first word and create df with that if matched countries list, then remove first word and so on
+culmulative.reportsorted <- culmulative.report %>%
+  mutate(CountryVector = as.character(CountriesVisited))
+
+##REMOVE SPACES FROM ALL SPACED COUNTRIES
+culmulative.reportsorted$CountryVector <- gsub("Antigua and Barbuda","AntiguaandBarbuda", culmulative.reportsorted$CountryVector)
+culmulative.reportsorted$CountryVector <- gsub("Bosnia and Herzegovina","BosniaandHerzegovina", culmulative.reportsorted$CountryVector)
+culmulative.reportsorted$CountryVector <- gsub("British Antarctic Territory","BritishAntarcticTerritory", culmulative.reportsorted$CountryVector)
+culmulative.reportsorted$CountryVector <- gsub("British Indian Ocean Territory","BritishIndianOceanTerritory", culmulative.reportsorted$CountryVector)
+culmulative.reportsorted$CountryVector <- gsub("Burkina Faso","BurkinaFaso ", culmulative.reportsorted$CountryVector)
+culmulative.reportsorted$CountryVector <- gsub("Bosnia and Herzegovina ","BosniaandHerzegovina ", culmulative.reportsorted$CountryVector)
+
+#SPLIT AT SPACE AND ALPHABETISE STRING
+culmulative.reportsorted$CountryVector <- sapply(lapply(strsplit(culmulative.reportsorted$CountryVector, split = " \\s*"), sort), paste, collapse = " ")
+
+culmulative.reportsorted$CountryVector <- gsub("[^[:alnum:][:blank:]]","", culmulative.reportsorted$CountryVector)
