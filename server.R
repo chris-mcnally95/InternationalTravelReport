@@ -139,12 +139,13 @@ function(input, output, session) {
     
     travellers.status.week.plot$EpiweekReturned <- gsub("Epiweek"," ", as.character(travellers.status.week.plot$EpiweekReturned))
     travellers.status.week.plot$EpiweekReturned <- as.numeric(travellers.status.week.plot$EpiweekReturned)
+    travellers.status.week.plot$Status[is.na(travellers.status.week.plot$Status)] <- "NA"
     travellers.status.week.plot$Status <- as.factor(travellers.status.week.plot$Status)
     travellers.status.week.plot$Status <- factor(travellers.status.week.plot$Status, levels=c("Red", "Amber", "Green", "NA"))
     
     case.by.week.chart <- ggplot(travellers.status.week.plot, aes(EpiweekReturned)) +
       geom_bar(aes(fill=Status)) +
-      scale_fill_manual(values = c("firebrick", "goldenrod", "seagreen"), name = "RAG Status") +
+      scale_fill_manual(values = c("firebrick", "goldenrod", "seagreen", "grey45"), name = "RAG Status") +
       scale_x_continuous(limits =  c(input$week[1], input$week[2]), breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) +
       theme_bw()
     

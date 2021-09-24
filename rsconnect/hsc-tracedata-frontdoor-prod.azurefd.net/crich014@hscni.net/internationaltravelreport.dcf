@@ -5,9 +5,9 @@ account: crich014@hscni.net
 server: hsc-tracedata-frontdoor-prod.azurefd.net
 hostUrl: https://hsc-tracedata-frontdoor-prod.azurefd.net/__api__
 appId: 228
-bundleId: 1381
+bundleId: 1398
 url: https://hsc-tracedata-frontdoor-prod.azurefd.net/content/228/
-when: 1632404288.32565
-lastSyncTime: 1632404288.32565
+when: 1632494139.38705
+lastSyncTime: 1632494139.38705
 asMultiple: FALSE
 asStatic: FALSE

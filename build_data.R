@@ -979,8 +979,9 @@ culmulativereport_nested <- culmulative.report %>%
 group_by(CountriesVisited) %>%
 nest()
 
-
-##Trying to split people who've traveled more than one place - take first word and create df with that if matched countries list, then remove first word and so on
+#####NOT COMPLETED YET
+##Trying to split people who've traveled more than one place - 
+#take first word of cpountriesvisited and create df with that if matches countries list, then do the same for second word and so on
 culmulative.reportsorted <- culmulative.report %>%
   mutate(CountryVector = as.character(CountriesVisited))
 
@@ -996,3 +997,5 @@ culmulative.reportsorted$CountryVector <- gsub("Bosnia and Herzegovina ","Bosnia
 culmulative.reportsorted$CountryVector <- sapply(lapply(strsplit(culmulative.reportsorted$CountryVector, split = " \\s*"), sort), paste, collapse = " ")
 
 culmulative.reportsorted$CountryVector <- gsub("[^[:alnum:][:blank:]]","", culmulative.reportsorted$CountryVector)
+
+
