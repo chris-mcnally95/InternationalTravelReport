@@ -25,4 +25,3 @@ getTable <- function(table) {
   }
 
 
-
