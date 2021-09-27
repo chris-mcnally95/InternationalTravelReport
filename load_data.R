@@ -41,3 +41,6 @@ collectclosecontacts <- getTable("CollectContactsCalls")
 cases <- getTable("cases") #%>%
 #dplyr::select(DateOfOnset, DateOfSample, CaseNumber, Gender, AgeAtPositiveResult,
 #CreatedOn)
+
+# Issue Connection Stop --- This should be moved to the bottom of global.R
+shiny::onStop(function(){dbDisconnect(con)})

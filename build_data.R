@@ -46,7 +46,7 @@ red.countries <- as.data.frame(red.countries)
 
 
 # Define Common Travel Area
-CTA <- as.data.frame(c("England", "Scotland", "Wales", "Isle of Man", "Ireland", "Guernsey", "Jersey")) 
+CTA <- as.data.frame(c("England", "Scotland", "Wales", "Isle of Man", "ROI", "Guernsey", "Jersey")) 
 CTA$status <- "Green"
 colnames(CTA) <- c("country", "status")
 
@@ -54,7 +54,9 @@ colnames(CTA) <- c("country", "status")
 all.countries <- countryExData[ , 2] #rworldmap package which lists all countries 
 all.countries <- gsub("Dem. Rep. Congo","Democratic Republic of Congo", all.countries, fixed = T) 
 all.countries <- gsub("Rep.","Republic", all.countries, fixed = T) 
-all.countries <- gsub("Viet Nam","Vietnam", all.countries, fixed = T) 
+all.countries <- gsub("Viet Nam","Vietnam", all.countries, fixed = T)
+all.countries <- gsub("Ireland","ROI", all.countries, fixed = T)
+all.countries <- gsub("United States","USA", all.countries, fixed = T)
 all.countries <- as.data.frame(all.countries)
 all.countries$status <- NA
 colnames(all.countries) <- c("country", "status")
@@ -140,6 +142,10 @@ old.country.status.epi <- old.all.countries.status$status
 ## Add old cases (pre-august 8th, pre epiweek 32) to country.status.epi data frame
 country.status.epi <- replace(country.status.epi, old.epiweeks, old.country.status.epi) 
 
+## Temporary Fix for Older Epiweeks
+country.status.epi$Epiweek35 <- country.status.epi$Epiweek34
+country.status.epi$Epiweek36 <- country.status.epi$Epiweek34
+country.status.epi$Epiweek37 <- country.status.epi$Epiweek34
 
 # Assign this weeks data
 # This will act as the RAG status cache for all countries 
@@ -148,29 +154,41 @@ epiweek.number <- as.numeric(strftime(Sys.Date(), format = "%V"))
 
 current.epiweek <- paste0("Epiweek", epiweek.number)
 previous.epiweek <- paste0("Epiweek", epiweek.number-1)
-previoustwo.epiweek <- paste0("Epiweek", epiweek.number-2)
+two.epiweeks.ago <- paste0("Epiweek", epiweek.number-2)
 
-## Assign this weeks RAG status
-status.assignment <- country.status.epi %>% 
+## Assign week RAG status
+current.status.assignment <- country.status.epi %>% 
   dplyr::select(current.epiweek) 
+status.assignment <- current.country.status
 
-status.assignment <- current.country.status 
+one.week.ago.assignment <- country.status.epi %>% 
+  dplyr::select(previous.epiweek)
+one.week.status.assignment <- current.country.status
 
-## Cache data frame
-country.status.epi$Epiweek35 <- current.country.status #Fix (should be able to remove this next week)
-country.status.epi$Epiweek36 <- current.country.status #Fix
-country.status.epi.cache <- country.status.epi
+two.week.ago.assignment <- country.status.epi %>% 
+  dplyr::select(all_of(two.epiweeks.ago))
+two.week.status.assignment <- current.country.status
 
 ## Add new week to the main repository
-country.status.epi.cache <- replace(country.status.epi, current.epiweek, status.assignment) 
+country.status.epi <- replace(country.status.epi, current.epiweek, status.assignment) 
 
-## Pivot the data frames
-pivot.countries <- pivot_longer(country.status.epi.cache, !country, names_to = "Epiweek", values_to = "Status")
+## Add fix for most previous epiweek not updating
+if(all(status.assignment == two.week.status.assignment)) {
+  country.status.epi <- replace(country.status.epi, previous.epiweek, status.assignment)
+} else {
+  country.status.epi <- replace(country.status.epi, previous.epiweek, two.week.status.assignment)
+}
 
+## Cache data frame
+country.status.epi.cache <- country.status.epi
 
 # Backup Data Frame
 ## CSV
 write.csv(country.status.epi.cache, "country.status.epi.csv")
+
+
+## Pivot the data frames
+pivot.countries <- pivot_longer(country.status.epi, !country, names_to = "Epiweek", values_to = "Status")
 
 
 # Define all cases for comparison
@@ -182,7 +200,6 @@ Allcases <- cases %>%
 # Monthly Data frame
 country.status.mon <- data.frame(matrix(NA, nrow = nrow(all.countries.status), ncol = 12))
 colnames(country.status.mon) <- month.name
-
 
 country.status.mon[ , c(1:7)] <- country.status.epi$Epiweek1
 country.status.mon[ , 8] <- country.status.epi$Epiweek33
@@ -958,7 +975,7 @@ previous.week.report <- travellers.status %>%
 
 #Previous 2 epiweeks
 last2.epiweeks.report <- travellers.status %>%
-  filter((EpiweekCreated == previous.epiweek)|(EpiweekCreated == previoustwo.epiweek)) %>% 
+  filter((EpiweekCreated == previous.epiweek)|(EpiweekCreated == two.epiweeks.ago)) %>% 
   add_count(CountriesVisited, name = "TotalCases") %>%
   dplyr::select(CountriesVisited, TotalCases, WhenDidYouReturnToNorthernIreland, DateOfOnset, DateOfSample, CaseNumber, Gender, AgeAtPositiveResult,
                 CreatedOn, AdditionalTravelInformation, MoreDetail, EpiweekCreated, EpiweekReturned, Status) %>%
