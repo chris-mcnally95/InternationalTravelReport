@@ -1,7 +1,7 @@
 library(shinydashboard)
 library(rangeBuilder)
 library(tidyverse)
-library(plyr)
+library(dplyr)
 library(lubridate)
 library(rvest)
 library(rworldmap)
@@ -22,11 +22,11 @@ con <- dbConnect(odbc::odbc(),
                  Authentication="ActiveDirectoryMSI",
                  server = synapse_server)
 
-sqlQuery <- "SELECT TOP (5) id as 'Case ID' from Cases"
-pingdb <- function() {
-  initdata <- dbGetQuery(con, sqlQuery)
-  return(initdata)
-}
+# sqlQuery <- "SELECT TOP (5) id as 'Case ID' from Cases"
+# pingdb <- function() {
+#   initdata <- dbGetQuery(con, sqlQuery)
+#   return(initdata)
+# }
 
 getTable <- function(table) {
   query <- paste("SELECT * FROM", table)
@@ -38,9 +38,8 @@ getTable <- function(table) {
 # Load data
 locations <- getTable("Locations")
 collectclosecontacts <- getTable("CollectContactsCalls")
-cases <- getTable("cases") #%>%
+cases <- getTable("cases")
+wgscases <- getTable("Wgscases")#%>%
 #dplyr::select(DateOfOnset, DateOfSample, CaseNumber, Gender, AgeAtPositiveResult,
 #CreatedOn)
 
-# Issue Connection Stop --- This should be moved to the bottom of global.R
-shiny::onStop(function(){dbDisconnect(con)})

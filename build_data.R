@@ -158,11 +158,11 @@ two.epiweeks.ago <- paste0("Epiweek", epiweek.number-2)
 
 ## Assign week RAG status
 current.status.assignment <- country.status.epi %>% 
-  dplyr::select(current.epiweek) 
+  dplyr::select(all_of(current.epiweek)) 
 status.assignment <- current.country.status
 
 one.week.ago.assignment <- country.status.epi %>% 
-  dplyr::select(previous.epiweek)
+  dplyr::select(all_of(previous.epiweek))
 one.week.status.assignment <- current.country.status
 
 two.week.ago.assignment <- country.status.epi %>% 
@@ -212,27 +212,38 @@ country.status.mon$country <- all.countries.status$country # Add countries colum
 
 # Define travellers
 ## Make data frame
+
 travellers <- locations %>%
   filter(TypeOfPlace == "Travel outside Northern Ireland") %>%
   left_join(collectclosecontacts, by = c("CollectCallId" = "Id")) %>%
-  dplyr::select(CountriesVisited.x, WhenDidYouLeaveNorthernIreland, WhenDidYouReturnToNorthernIreland, AdditionalTravelInformation, MoreDetail, DateOfSample, CaseNumber, Gender
-  )
-
-#%>%
-travellers <- travellers %>%
   left_join(cases, by = "CaseNumber") %>%
-  dplyr::select(CountriesVisited.x, WhenDidYouLeaveNorthernIreland, WhenDidYouReturnToNorthernIreland, DateOfOnset, DateOfSample.x, CaseNumber, 
-                Gender.x, AgeAtPositiveResult,
-                CreatedOn, AdditionalTravelInformation, MoreDetail) %>% 
+  dplyr::select(ContactId,
+                CountriesVisited.x,
+                WhenDidYouLeaveNorthernIreland,
+                WhenDidYouReturnToNorthernIreland,
+                DateOfOnset,
+                DateOfSample.x,
+                CaseNumber, 
+                Gender.x,
+                AgeAtPositiveResult,
+                CreatedOn,
+                AdditionalTravelInformation,
+                MoreDetail) %>% 
   filter(WhenDidYouReturnToNorthernIreland >= "2021-01-04" & WhenDidYouReturnToNorthernIreland <= Sys.Date()+1) %>% 
   mutate(#CreatedOn = as.Date(CreatedOn),
-    #DateOfOnset = as.Date(DateOfOnset),
-    DateOfSample = as.Date(DateOfSample.x),
-    Gender = as.character(Gender.x)) %>%
-  #AgeAtPositiveResult = as.integer(AgeAtPositiveResult.x)) %>%
+         #DateOfOnset = as.Date(DateOfOnset),
+          DateOfSample = as.Date(DateOfSample.x),
+          Gender = as.character(Gender.x)) %>%
+         #AgeAtPositiveResult = as.integer(AgeAtPositiveResult.x)) %>%
   mutate(EpiweekReturned = paste0("Epiweek", strftime(WhenDidYouReturnToNorthernIreland, format = "%V"))) %>% 
-  mutate(EpiweekCreated = paste0("Epiweek", strftime(CreatedOn, format = "%V"))) # %>% 
-#drop_na(CountriesVisited.x) 
+  mutate(EpiweekCreated = paste0("Epiweek", strftime(CreatedOn, format = "%V"))) %>% 
+  # Fix the names of columns
+  # rename_with(~ gsub(".x", "Merged", .x, fixed = TRUE)) %>%
+  # rename_with(~ gsub(".y", "Cases", .x, fixed = TRUE)) %>% 
+  left_join(select(wgscases,
+                   ContactId,
+                   WgsVariant,
+                   WgsReflexAssay), by = "ContactId")
 
 ## Tidying
 travellers$EpiweekCreated <-  sub('Epiweek0', 'Epiweek', travellers$EpiweekCreated) #Remove the 0 value from single digit Epiweeks

@@ -1,0 +1,174 @@
+---
+title: "International Travel COVID-19 Report `r format(Sys.Date(), '%d-%m-%Y')`"
+output: 
+  flexdashboard::flex_dashboard:
+    theme:
+      navbar-bg: "#003049"
+    orientation: rows
+    vertical_layout: fill
+---
+
+```{r source scripts, include=FALSE}
+source("./load_data.R")
+source("./build_data.R")
+```
+
+```{r setup, include=FALSE}
+library(flexdashboard)
+```
+
+```{r include=FALSE}
+# Total
+totalcases <- nrow(travellers.status)
+
+totalpercentage <- paste0(round((nrow(travellers.status)/nrow(Allcases))*100, 2), "%")
+
+totalgreen <- nrow(travellers.status %>% 
+                     filter(Status == "Green"))
+
+totalamber <- nrow(travellers.status %>% 
+                     filter(Status == "Green",
+                         EpiweekCreated == current.epiweek))
+
+totalred <- nrow(travellers.status %>% 
+                   filter(Status == "Red")) 
+
+travellers.status$WgsReflexAssay <- factor(travellers.status$WgsReflexAssay, levels = c("Unknown", "Beta", "Delta"))
+totalwgs <- table(travellers.status$WgsReflexAssay)
+totalwgsunk <- as.numeric(totalwgs[1])
+totalwgsbeta <- as.numeric(totalwgs[2])
+totalwgsdelta <- as.numeric(totalwgs[3])
+
+# Fortnight
+FortCasesAll <- rbind(Allcases %>% 
+                    filter(EpiweekCreated == current.epiweek), 
+                    Allcases %>% 
+                    filter(EpiweekCreated == previous.epiweek))
+
+FortTravellers <- rbind(travellers.status %>% 
+                    filter(EpiweekCreated == current.epiweek), 
+                    travellers.status %>% 
+                    filter(EpiweekCreated == previous.epiweek))
+
+fortcases <- nrow(FortTravellers)
+
+fortpercentage <- paste0(
+  round(
+    nrow(FortTravellers)/
+      nrow(FortCasesAll)*100, 2), "%")
+
+fortgreen <- nrow(FortTravellers %>% 
+                    filter(Status == "Green"))
+
+fortamber <- nrow(FortTravellers %>% 
+                    filter(Status == "Amber"))
+
+fortred <- nrow(FortTravellers %>% 
+                    filter(Status == "Red")) 
+
+totalwgsfort <- table(FortTravellers$WgsReflexAssay)
+totalwgsfortunk <- as.numeric(totalwgsfort[1])
+totalwgsfortbeta <- as.numeric(totalwgsfort[2])
+totalwgsfortdelta <- as.numeric(totalwgsfort[3])
+```
+
+# Fortnightly Report
+
+Welcome to the Travel Report for COVID-19 cases associated with international travel within Northern Ireland.
+This report is a summary of a dashboard that has been built to aid the CTC Data Management Team / Surveillance Team to monitor COVID-19 cases related to international travel.
+Please note that in some cases a country status might not be assigned and will result in the omission of data.
+
+Row 
+--------------------------------------
+
+### 
+```{r}
+valueBox(value = totalcases,
+         caption = paste("Total Reported Cases from International Travellers as of ", format(Sys.Date(), "%d-%m-%Y")),
+         icon = "ion-android-clipboard", 
+         color ="cornflowerblue")
+```
+
+### 
+```{r}
+valueBox(value = fortcases,
+         caption = paste("Reported Cases from International Travellers Within Last Two Weeks"),
+         icon = "ion-android-clipboard", 
+         color ="cornflowerblue")
+``` 
+
+Row 
+--------------------------------------
+
+### 
+```{r}
+valueBox(value = totalpercentage,
+         caption = paste("Percentage of Total Cases that are International Travellers"),
+         icon = "ion-podium", 
+         color ="cornflowerblue")
+```
+
+### 
+```{r}
+valueBox(value = fortpercentage,
+         caption = paste("Percentage of Cases that are International Travellers Within Last Two Weeks"),
+         icon = "ion-podium", 
+         color = "cornflowerblue")
+```
+
+Row 
+--------------------------------------
+
+### 
+```{r}
+valueBox(value = totalgreen,
+         caption = paste("Total Reported Cases from Green Countries"),
+         icon = "ion-plane", 
+         color ="forestgreen")
+```
+
+### 
+```{r}
+valueBox(value = fortgreen,
+         caption = paste("Reported Cases from Green Countries Within Last Two Weeks"),
+         icon = "ion-plane", 
+         color = "forestgreen")
+```
+
+Row 
+--------------------------------------
+### 
+```{r}
+valueBox(value = totalamber,
+         caption = paste("Total Reported Cases from Amber Countries"),
+         icon = "ion-plane", 
+         color ="goldenrod")
+```
+
+### 
+```{r}
+valueBox(value = fortamber,
+         caption = paste("Reported Cases from Amber Countries Within Last Two Weeks"),
+         icon = "ion-plane", 
+         color = "goldenrod")
+```
+
+Row 
+--------------------------------------
+
+### 
+```{r}
+valueBox(value = totalred,
+         caption = paste("Total Reported Cases from Red Countries"),
+         icon = "ion-plane", 
+         color ="firebrick")
+```
+
+### 
+```{r}
+valueBox(value = fortred,
+         caption = paste("Reported Cases from Red Countries Within Last Two Weeks"),
+         icon = "ion-plane", 
+         color = "firebrick")
+```
+
