@@ -19,19 +19,22 @@ library(flexdashboard)
 
 ```{r include=FALSE}
 # Total
-totalcases <- nrow(travellers.status)
+totalcases <- nrow(travellers.status %>% 
+                     filter(EpiweekCreated != current.epiweek))
 
 totalpercentage <- paste0(round((nrow(travellers.status)/nrow(Allcases))*100, 2), "%")
 
 totalgreen <- nrow(travellers.status %>% 
-                     filter(Status == "Green"))
+                     filter(Status == "Green",
+                            EpiweekCreated != current.epiweek))
 
 totalamber <- nrow(travellers.status %>% 
-                     filter(Status == "Green",
-                         EpiweekCreated == current.epiweek))
+                     filter(Status == "Amber",
+                            EpiweekCreated != current.epiweek))
 
 totalred <- nrow(travellers.status %>% 
-                   filter(Status == "Red")) 
+                   filter(Status == "Red",
+                          EpiweekCreated != current.epiweek)) 
 
 travellers.status$WgsReflexAssay <- factor(travellers.status$WgsReflexAssay, levels = c("Unknown", "Beta", "Delta"))
 totalwgs <- table(travellers.status$WgsReflexAssay)
@@ -41,14 +44,14 @@ totalwgsdelta <- as.numeric(totalwgs[3])
 
 # Fortnight
 FortCasesAll <- rbind(Allcases %>% 
-                    filter(EpiweekCreated == current.epiweek), 
+                    filter(EpiweekCreated == previous.epiweek), 
                     Allcases %>% 
-                    filter(EpiweekCreated == previous.epiweek))
+                    filter(EpiweekCreated == two.epiweeks.ago))
 
 FortTravellers <- rbind(travellers.status %>% 
-                    filter(EpiweekCreated == current.epiweek), 
+                    filter(EpiweekCreated == previous.epiweek), 
                     travellers.status %>% 
-                    filter(EpiweekCreated == previous.epiweek))
+                    filter(EpiweekCreated == two.epiweeks.ago))
 
 fortcases <- nrow(FortTravellers)
 
@@ -76,7 +79,7 @@ totalwgsfortdelta <- as.numeric(totalwgsfort[3])
 
 Welcome to the Travel Report for COVID-19 cases associated with international travel within Northern Ireland.
 This report is a summary of a dashboard that has been built to aid the CTC Data Management Team / Surveillance Team to monitor COVID-19 cases related to international travel.
-Please note that in some cases a country status might not be assigned and will result in the omission of data.
+Please note that in some cases a country status might not be assigned and will result in the omission of data. Total cases refers to all cases since records began in March 2020. Two weeks refers to all cases from Monday 00:00 on `r format(floor_date(today()-13, "week")+1, "%d-%m-%Y")` to the most recent Sunday 23:59.
 
 Row 
 --------------------------------------
@@ -84,7 +87,7 @@ Row
 ### 
 ```{r}
 valueBox(value = totalcases,
-         caption = paste("Total Reported Cases from International Travellers as of ", format(Sys.Date(), "%d-%m-%Y")),
+         caption = paste("Total Reported Cases from International Travellers as of ", format(Sys.Date()-1, "%d-%m-%Y")),
          icon = "ion-android-clipboard", 
          color ="cornflowerblue")
 ```
@@ -170,5 +173,28 @@ valueBox(value = fortred,
          caption = paste("Reported Cases from Red Countries Within Last Two Weeks"),
          icon = "ion-plane", 
          color = "firebrick")
+```
+
+# Line Listings
+
+## Line Listing for Previous Two Weeks
+
+```{r}
+ DT::datatable(last2.epiweeks.report %>% 
+                 select(CountriesVisited,
+                        WhenDidYouReturnToNorthernIreland,
+                        DateOfOnset,
+                        DateOfSample,
+                        Gender,
+                        AgeAtPositiveResult,
+                        CreatedOn,
+                        Status),
+                  caption = paste("Line List for COVID-19 Cases Associated with International Travellers in Northern Ireland within NI from", 
+                                  format(floor_date(today()-13, "week")+1, "%d-%m-%Y"), "to the most recent Sunday 23:59"),
+                  filter = 'top',
+                  options = list(
+                    pageLength = 25,
+                    dom = 'lBftrip',
+                    scrollX = T))
 ```
 
