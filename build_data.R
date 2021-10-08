@@ -1,25 +1,25 @@
 
 
 ## Scrape green country list from NI Direct website as of 18/08/21
-green.url <- "https://www.nidirect.gov.uk/node/14416#toc-1"
-green.countries <- read_html(green.url) %>% 
-  html_nodes("main") %>% 
-  html_nodes("article") %>% 
-  html_nodes('ul')
-green.countries <- html_text(green.countries[2])
+#green.url <- "https://www.nidirect.gov.uk/node/14416#toc-1"
+#green.countries <- read_html(green.url) %>% 
+#  html_nodes("main") %>% 
+#  html_nodes("article") %>% 
+#  html_nodes('ul')
+#green.countries <- html_text(green.countries[2])
 
 ## Tidy Scraped Data
-green.countries <- str_split(green.countries, pattern = "\n\t") #Split single string into each country 
-green.countries <- as.data.frame(green.countries)
-colnames(green.countries) <- "country"
-green.countries <- gsub("\\s*\\([^\\)]+\\)","", as.character(green.countries$country)) #Remove brackets and everything in them
-green.countries <- str_remove(green.countries, "[\n]")
-green.countries <- str_remove(green.countries, " and Jerusalem")
-green.countries <- as.data.frame(green.countries)
-colnames(green.countries) <- "country"
-green.countries$status <- "Green"
-green.countries <- lapply(green.countries, str_trim) #Trim whitespace
-green.countries <- as.data.frame(green.countries)
+#green.countries <- str_split(green.countries, pattern = "\n\t") #Split single string into each country 
+#green.countries <- as.data.frame(green.countries)
+#colnames(green.countries) <- "country"
+#green.countries <- gsub("\\s*\\([^\\)]+\\)","", as.character(green.countries$country)) #Remove brackets and everything in them
+#green.countries <- str_remove(green.countries, "[\n]")
+#green.countries <- str_remove(green.countries, " and Jerusalem")
+#green.countries <- as.data.frame(green.countries)
+#colnames(green.countries) <- "country"
+#green.countries$status <- "Green"
+#green.countries <- lapply(green.countries, str_trim) #Trim whitespace
+#green.countries <- as.data.frame(green.countries)
 
 
 # Web scraping and defining red countries
@@ -46,8 +46,8 @@ red.countries <- as.data.frame(red.countries)
 
 
 # Define Common Travel Area
-CTA <- as.data.frame(c("England", "Scotland", "Wales", "Isle of Man", "ROI", "Guernsey", "Jersey")) 
-CTA$status <- "Green"
+CTA <- as.data.frame(c("England", "Scotland", "Wales", "Isle of Man", "Guernsey", "Jersey")) 
+CTA$status <- "Non-Red"
 colnames(CTA) <- c("country", "status")
 
 ## Define all countries in world
@@ -61,19 +61,17 @@ all.countries <- as.data.frame(all.countries)
 all.countries$status <- NA
 colnames(all.countries) <- c("country", "status")
 
-## Amber countries are countries not on red or green lists or CTA
-non.amber.countries <- rbind(red.countries, green.countries, CTA)
+## Remove countries that appear in red lists 
+non.red.countries <- anti_join(all.countries, red.countries, by = "country")
+missed.countries <- data.frame("country" = c("Qatar", "Bahamas"), "status" = NA)
+non.red.countries <- rbind(non.red.countries, missed.countries)
+non.red.countries <- rbind(non.red.countries, CTA)
 
-## Remove countries that appear in green and red lists and CTA
-amber.countries <- anti_join(all.countries, non.amber.countries, by = "country")
-missed.amber.countries <- data.frame("country" = c("Qatar"), "status" = NA)
-amber.countries <- rbind(amber.countries, missed.amber.countries)
-
-amber.countries$status <- "Amber"
+non.red.countries$status <- "Non-Red"
 
 
 # Country Status data frame
-all.countries.status <- rbind(amber.countries, non.amber.countries)
+all.countries.status <- rbind(red.countries, non.red.countries)
 all.countries.status <- all.countries.status[order(all.countries.status$country), ] 
 current.country.status <- all.countries.status$status
 
@@ -85,67 +83,63 @@ colnames(country.status.epi) <- epiweek
 country.status.epi$country <- all.countries.status$country # Add countries column
 
 
-# Old Country Status lists (Prior to Changes Implemented August 30th 2021)
-epiweeks.30 <- (paste0("Epiweek", 32:34)) # Define Epiweeks to change
+# # Old Country Status lists (Prior to Changes Implemented August 30th 2021)
+# epiweeks.30 <- (paste0("Epiweek", 32:34)) # Define Epiweeks to change
+# 
+# ## Green
+# green.changes.30 <- data.frame("country" = c("Azores", "Canada", "Denmark", "Finland", "Liechtenstein", "Lithuania", "Switzerland")) #These countries were added to green list August 30th 2021
+# green.countries.30 <- anti_join(x = green.countries, y = green.changes.30, by = "country")
+# 
+# ## Red
+# red.changes.30 <- data.frame("country" = c("Montenegro", "Thailand")) #These countries were added to red list August 30th 2021
+# red.countries.30 <- anti_join(x = red.countries, y = red.changes.30, by = "country")
+# 
+# ## Amber
+# non.amber.countries.30 <- rbind(red.countries.30, green.countries.30, CTA)
+# amber.countries.30 <- anti_join(all.countries, non.amber.countries.30, by = "country")
+# 
+# ## Old Country Status data frame
+# all.countries.status.30 <- rbind(amber.countries.30, non.amber.countries.30)
+# missed.countries.30 <- anti_join(all.countries.status, all.countries.status.30, by = "country")
+# amber.countries.30 <- rbind(amber.countries.30, missed.countries.30)
+# amber.countries.30$status <- "Amber"
+# 
+# all.countries.status.30 <- rbind(amber.countries.30, non.amber.countries.30)
+# all.countries.status.30 <- all.countries.status.30[order(all.countries.status.30$country), ] 
+# country.status.epi.30 <- all.countries.status.30$status
+# 
+# ## Add old cases (pre-august 30th, pre epiweek 35) to country.status.epi data frame
+# country.status.epi <- replace(country.status.epi, epiweeks.30, country.status.epi.30)
+# 
+# 
+# # Old Country Status lists (Prior to Changes Implemented August 8th 2021)
+# ## Green
+# green.changes <- data.frame("country" = c("Austria", "Germany", "Latvia", "Norway", "Romania", "Slovenia", "Slovakia")) #These countries were added to green list August 8th 2021
+# old.green.countries <- anti_join(x = green.countries.30, y = green.changes, by = "country")
+# 
+# ## Red
+# red.changes <- data.frame("country" = c("Georgia", "La Reunion", "Mayotte", "Mexico")) #These countries were added to red list August 8th 2021
+# old.red.countries <- anti_join(x = red.countries.30, y = red.changes, by = "country")
+# 
+# ## Amber
+# old.non.amber.countries <- rbind(old.red.countries, old.green.countries, CTA)
+# old.amber.countries <- anti_join(all.countries, old.non.amber.countries, by = "country")
+# 
+# ## Old Country Status data frame
+# old.epiweeks <- (paste0("Epiweek", 1:31))
+# 
+# old.all.countries.status <- rbind(old.amber.countries, old.non.amber.countries)
+# missed.countries <- anti_join(all.countries.status, old.all.countries.status, by = "country")
+# old.amber.countries <- rbind(old.amber.countries, missed.countries)
+# old.amber.countries$status <- "Amber"
+# 
+# old.all.countries.status <- rbind(old.amber.countries, old.non.amber.countries)
+# old.all.countries.status <- old.all.countries.status[order(old.all.countries.status$country), ] 
+# old.country.status.epi <- old.all.countries.status$status
+# 
+# ## Add old cases (pre-august 8th, pre epiweek 32) to country.status.epi data frame
+# country.status.epi <- replace(country.status.epi, old.epiweeks, old.country.status.epi) 
 
-## Green
-green.changes.30 <- data.frame("country" = c("Azores", "Canada", "Denmark", "Finland", "Liechtenstein", "Lithuania", "Switzerland")) #These countries were added to green list August 30th 2021
-green.countries.30 <- anti_join(x = green.countries, y = green.changes.30, by = "country")
-
-## Red
-red.changes.30 <- data.frame("country" = c("Montenegro", "Thailand")) #These countries were added to red list August 30th 2021
-red.countries.30 <- anti_join(x = red.countries, y = red.changes.30, by = "country")
-
-## Amber
-non.amber.countries.30 <- rbind(red.countries.30, green.countries.30, CTA)
-amber.countries.30 <- anti_join(all.countries, non.amber.countries.30, by = "country")
-
-## Old Country Status data frame
-all.countries.status.30 <- rbind(amber.countries.30, non.amber.countries.30)
-missed.countries.30 <- anti_join(all.countries.status, all.countries.status.30, by = "country")
-amber.countries.30 <- rbind(amber.countries.30, missed.countries.30)
-amber.countries.30$status <- "Amber"
-
-all.countries.status.30 <- rbind(amber.countries.30, non.amber.countries.30)
-all.countries.status.30 <- all.countries.status.30[order(all.countries.status.30$country), ] 
-country.status.epi.30 <- all.countries.status.30$status
-
-## Add old cases (pre-august 30th, pre epiweek 35) to country.status.epi data frame
-country.status.epi <- replace(country.status.epi, epiweeks.30, country.status.epi.30)
-
-
-# Old Country Status lists (Prior to Changes Implemented August 8th 2021)
-## Green
-green.changes <- data.frame("country" = c("Austria", "Germany", "Latvia", "Norway", "Romania", "Slovenia", "Slovakia")) #These countries were added to green list August 8th 2021
-old.green.countries <- anti_join(x = green.countries.30, y = green.changes, by = "country")
-
-## Red
-red.changes <- data.frame("country" = c("Georgia", "La Reunion", "Mayotte", "Mexico")) #These countries were added to red list August 8th 2021
-old.red.countries <- anti_join(x = red.countries.30, y = red.changes, by = "country")
-
-## Amber
-old.non.amber.countries <- rbind(old.red.countries, old.green.countries, CTA)
-old.amber.countries <- anti_join(all.countries, old.non.amber.countries, by = "country")
-
-## Old Country Status data frame
-old.epiweeks <- (paste0("Epiweek", 1:31))
-
-old.all.countries.status <- rbind(old.amber.countries, old.non.amber.countries)
-missed.countries <- anti_join(all.countries.status, old.all.countries.status, by = "country")
-old.amber.countries <- rbind(old.amber.countries, missed.countries)
-old.amber.countries$status <- "Amber"
-
-old.all.countries.status <- rbind(old.amber.countries, old.non.amber.countries)
-old.all.countries.status <- old.all.countries.status[order(old.all.countries.status$country), ] 
-old.country.status.epi <- old.all.countries.status$status
-
-## Add old cases (pre-august 8th, pre epiweek 32) to country.status.epi data frame
-country.status.epi <- replace(country.status.epi, old.epiweeks, old.country.status.epi) 
-
-## Temporary Fix for Older Epiweeks
-country.status.epi$Epiweek35 <- country.status.epi$Epiweek34
-country.status.epi$Epiweek36 <- country.status.epi$Epiweek34
-country.status.epi$Epiweek37 <- country.status.epi$Epiweek34
 
 # Assign this weeks data
 # This will act as the RAG status cache for all countries 
@@ -178,6 +172,10 @@ if(all(status.assignment == two.week.status.assignment)) {
 } else {
   country.status.epi <- replace(country.status.epi, previous.epiweek, two.week.status.assignment)
 }
+
+## Temporary Fix for Older Epiweeks
+old.epiweeks <- (paste0("Epiweek", 1:38))
+country.status.epi <- replace(country.status.epi, old.epiweeks, country.status.epi$Epiweek40) 
 
 ## Cache data frame
 country.status.epi.cache <- country.status.epi
