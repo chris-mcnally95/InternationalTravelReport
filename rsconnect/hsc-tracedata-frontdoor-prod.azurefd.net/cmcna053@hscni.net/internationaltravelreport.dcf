@@ -1,0 +1,13 @@
+name: internationaltravelreport
+title: InternationalTravelReport
+username: cmcna053@hscni.net
+account: cmcna053@hscni.net
+server: hsc-tracedata-frontdoor-prod.azurefd.net
+hostUrl: https://hsc-tracedata-frontdoor-prod.azurefd.net/__api__
+appId: 288
+bundleId: 1720
+url: https://hsc-tracedata-frontdoor-prod.azurefd.net/content/288/
+when: 1636550306.69326
+lastSyncTime: 1636550306.69326
+asMultiple: FALSE
+asStatic: FALSE

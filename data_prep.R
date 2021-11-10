@@ -3,16 +3,17 @@ synapse_server <- "swhscphipprduks01.sql.azuresynapse.net"
 synapse_database <- "exploratorydb"
 connection_driver <- "{ODBC Driver 17 for SQL Server}"
 
-con <- dbConnect(odbc::odbc(),
-                 driver = connection_driver,
-                 database = synapse_database,
-                 Authentication="ActiveDirectoryMSI",
-                 server = synapse_server)
+con <- DBI::dbConnect(odbc::odbc(),
+                      driver = connection_driver,
+                      database = synapse_database,
+                      Authentication="ActiveDirectoryMSI",
+                      server = synapse_server)
+                 
 
 # Make Synapse Tables Function
 getTable <- function(table) {
   query <- paste("SELECT * FROM", table)
-  data <- dbGetQuery(con, query)
+  data <- DBI::dbGetQuery(con, query)
   message(paste0("Data retrieved from ", table))
   return(data)
 }
@@ -35,17 +36,17 @@ two.epiweeks.ago <- paste0("Epiweek", epiweek.number-2)
 
 # Define all cases for comparison
 Allcases <- cases %>% 
-  filter(CreatedOn >= "2021-01-04" & CreatedOn <= Sys.Date()+1) %>% 
-  mutate(EpiweekCreated = paste0("Epiweek", strftime(CreatedOn, format = "%V")))
+  dplyr::filter(CreatedOn >= "2021-01-04" & CreatedOn <= Sys.Date()+1) %>% 
+  dplyr::mutate(EpiweekCreated = paste0("Epiweek", strftime(CreatedOn, format = "%V")))
 
 
 # Define travellers
 ## Make data frame
 
 travellers <- locations %>%
-  filter(TypeOfPlace == "Travel outside Northern Ireland") %>%
-  left_join(collectclosecontacts, by = c("CollectCallId" = "Id")) %>%
-  left_join(cases, by = "CaseNumber") %>%
+  dplyr::filter(TypeOfPlace == "Travel outside Northern Ireland") %>%
+  dplyr::left_join(collectclosecontacts, by = c("CollectCallId" = "Id")) %>%
+  dplyr::left_join(cases, by = "CaseNumber") %>%
   dplyr::select(ContactId,
                 CountriesVisited.x,
                 WhenDidYouLeaveNorthernIreland,
@@ -59,28 +60,22 @@ travellers <- locations %>%
                 AdditionalTravelInformation,
                 MoreDetail,
                 AlreadyCompletedViaSelfTrace) %>% 
-  filter(WhenDidYouReturnToNorthernIreland >= "2021-01-04" & WhenDidYouReturnToNorthernIreland <= Sys.Date()+1) %>% 
-  mutate(#CreatedOn = as.Date(CreatedOn),
-    #DateOfOnset = as.Date(DateOfOnset),
-    DateOfSample = as.Date(DateOfSample.x),
-    Gender = as.character(Gender.x)) %>%
-  #AgeAtPositiveResult = as.integer(AgeAtPositiveResult.x)) %>%
-  mutate(EpiweekReturned = paste0("Epiweek", strftime(WhenDidYouReturnToNorthernIreland, format = "%V"))) %>% 
-  mutate(EpiweekCreated = paste0("Epiweek", strftime(CreatedOn, format = "%V"))) %>% 
-  # Fix the names of columns
-  # rename_with(~ gsub(".x", "Merged", .x, fixed = TRUE)) %>%
-  # rename_with(~ gsub(".y", "Cases", .x, fixed = TRUE)) %>% 
-  left_join(select(wgscases,
-                   ContactId,
-                   WgsVariant,
-                   WgsReflexAssay), by = "ContactId")
-
+  dplyr::filter(WhenDidYouReturnToNorthernIreland >= "2021-01-04" & WhenDidYouReturnToNorthernIreland <= Sys.Date()+1) %>% 
+  dplyr::mutate(DateOfSample = as.Date(DateOfSample.x),
+                Gender = as.character(Gender.x)) %>%
+  dplyr::mutate(EpiweekReturned = paste0("Epiweek", strftime(WhenDidYouReturnToNorthernIreland, format = "%V"))) %>% 
+  dplyr::mutate(EpiweekCreated = paste0("Epiweek", strftime(CreatedOn, format = "%V"))) %>% 
+  dplyr::left_join(dplyr::select(wgscases,
+                                 ContactId,
+                                 WgsVariant,
+                                 WgsReflexAssay), by = "ContactId")
+                   
 ## Tidying
 travellers$EpiweekCreated <-  sub('Epiweek0', 'Epiweek', travellers$EpiweekCreated) #Remove the 0 value from single digit Epiweeks
 travellers$EpiweekReturned <-  sub('Epiweek0', 'Epiweek', travellers$EpiweekReturned)
 
 travellers$WhenDidYouLeaveNorthernIreland <- strptime(travellers$WhenDidYouLeaveNorthernIreland, format = "%Y-%m-%d")
-travellers$WhenDidYouReturnToNorthernIreland <- strptime(travellers$WhenDidYouReturnToNorthernIreland, format = "%Y-%m-%d") + days(1) #Day behind fix
+travellers$WhenDidYouReturnToNorthernIreland <- strptime(travellers$WhenDidYouReturnToNorthernIreland, format = "%Y-%m-%d") + lubridate::days(1) #Day behind fix
 travellers$DateOfOnset <- strptime(travellers$DateOfOnset, format = "%Y-%m-%d")
 
 #travellers$CreatedOn <- strptime(travellers$CreatedOn, format = "%Y-%m-%d")
@@ -92,7 +87,7 @@ travellers$DateOfOnset <- format(travellers$DateOfOnset, format = "%d-%m-%Y")
 #travellers$CreatedOn <- format(travellers$CreatedOn, format = "%d-%m-%Y")
 
 ## Tidy pre drop down data
-travellers$CountriesVisited.x <- lapply(travellers$CountriesVisited.x, str_trim)
+travellers$CountriesVisited.x <- lapply(travellers$CountriesVisited.x, stringr::str_trim)
 
 ### COUNTRY TIDY START ####
 travellers$CountriesVisited.x <- gsub("Southern | . National Citizen Service .|NI> | for work purposes| from saturday 23rd to wed 28th|&", "", travellers$CountriesVisited.x)
@@ -758,7 +753,7 @@ travellers$CountriesVisited.x <- gsub("United States", "USA", travellers$Countri
 
 ## Country tallies
 country.count <- as.data.frame(table(travellers$CountriesVisited.x))
-country.count <- arrange(country.count, desc(Freq))
+country.count <- dplyr::arrange(country.count, desc(Freq))
 #colnames(country.count) <- c("country", "count")
 #country.count <- left_join(country.count, all.countries.status, by = "country")
 
@@ -776,69 +771,132 @@ system.date <- as.Date(Sys.Date(), format = "%d-%m-%Y")
 
 # Previous Day
 previous.day.report <- travellers %>%
-  filter(CreatedOn == Sys.Date()-1) %>% 
-  add_count(CountriesVisited, name = "TotalCases") %>%
-  dplyr::select(CountriesVisited, TotalCases, AlreadyCompletedViaSelfTrace, WhenDidYouReturnToNorthernIreland, DateOfOnset, DateOfSample, CaseNumber, Gender, AgeAtPositiveResult,
-                CreatedOn, AdditionalTravelInformation, MoreDetail, EpiweekCreated, EpiweekReturned
+  dplyr::filter(CreatedOn == Sys.Date()-1) %>% 
+  dplyr::add_count(CountriesVisited, name = "TotalCases") %>%
+  dplyr::select(CountriesVisited,
+                TotalCases,
+                AlreadyCompletedViaSelfTrace,
+                WhenDidYouReturnToNorthernIreland,
+                DateOfOnset,
+                DateOfSample,
+                CaseNumber,
+                Gender,
+                AgeAtPositiveResult,
+                CreatedOn,
+                AdditionalTravelInformation,
+                MoreDetail,
+                EpiweekCreated,
+                EpiweekReturned
                 #, Status
   ) %>%
-  dplyr::select(-c(EpiweekCreated, EpiweekReturned)) %>%
-  arrange(CountriesVisited)
+  dplyr::select(-c(EpiweekCreated,
+                   EpiweekReturned)) %>%
+  dplyr::arrange(CountriesVisited)
 
 # Current Week
 current.week.report <- travellers %>% 
-  filter(EpiweekCreated == current.epiweek) %>% 
-  add_count(CountriesVisited, name = "TotalCases") %>%
-  dplyr::select(CountriesVisited, TotalCases, AlreadyCompletedViaSelfTrace, WhenDidYouReturnToNorthernIreland, DateOfOnset, DateOfSample, CaseNumber, Gender, AgeAtPositiveResult,
-                CreatedOn, AdditionalTravelInformation, MoreDetail, EpiweekCreated, EpiweekReturned
+  dplyr::filter(EpiweekCreated == current.epiweek) %>% 
+  dplyr::add_count(CountriesVisited, name = "TotalCases") %>%
+  dplyr::select(CountriesVisited,
+                TotalCases,
+                AlreadyCompletedViaSelfTrace,
+                WhenDidYouReturnToNorthernIreland,
+                DateOfOnset,
+                DateOfSample,
+                CaseNumber,
+                Gender,
+                AgeAtPositiveResult,
+                CreatedOn,
+                AdditionalTravelInformation,
+                MoreDetail,
+                EpiweekCreated,
+                EpiweekReturned
                 #, Status
   ) %>%
-  dplyr::select(-c(EpiweekCreated, EpiweekReturned))%>%
-  arrange(CountriesVisited)
+  dplyr::select(-c(EpiweekCreated,
+                   EpiweekReturned))%>%
+  dplyr::arrange(CountriesVisited)
 
 # Previous Week
 previous.week.report <- travellers %>%
-  filter(EpiweekCreated == previous.epiweek) %>% 
-  add_count(CountriesVisited, name = "TotalCases") %>%
-  dplyr::select(CountriesVisited, TotalCases, AlreadyCompletedViaSelfTrace, WhenDidYouReturnToNorthernIreland, DateOfOnset, DateOfSample, CaseNumber, Gender, AgeAtPositiveResult,
-                CreatedOn, AdditionalTravelInformation, MoreDetail, EpiweekCreated, EpiweekReturned
+  dplyr::filter(EpiweekCreated == previous.epiweek) %>% 
+  dplyr::add_count(CountriesVisited, name = "TotalCases") %>%
+  dplyr::select(CountriesVisited,
+                TotalCases,
+                AlreadyCompletedViaSelfTrace,
+                WhenDidYouReturnToNorthernIreland,
+                DateOfOnset,
+                DateOfSample,
+                CaseNumber,
+                Gender,
+                AgeAtPositiveResult,
+                CreatedOn,
+                AdditionalTravelInformation,
+                MoreDetail,
+                EpiweekCreated,
+                EpiweekReturned
                 #, Status
   ) %>%
-  dplyr::select(-c(EpiweekCreated, EpiweekReturned))%>%
-  arrange(CountriesVisited)
+  dplyr::select(-c(EpiweekCreated,
+                   EpiweekReturned))%>%
+  dplyr::arrange(CountriesVisited)
 
 #Previous 2 epiweeks
 last2.epiweeks.report <- travellers %>%
-  filter((EpiweekCreated == previous.epiweek)|(EpiweekCreated == two.epiweeks.ago)) %>% 
-  add_count(CountriesVisited, name = "TotalCases") %>%
-  dplyr::select(CountriesVisited, TotalCases, AlreadyCompletedViaSelfTrace, WhenDidYouReturnToNorthernIreland, DateOfOnset, DateOfSample, CaseNumber, Gender, AgeAtPositiveResult,
-                CreatedOn, AdditionalTravelInformation, MoreDetail, EpiweekCreated, EpiweekReturned
+  dplyr::filter((EpiweekCreated == previous.epiweek)|(EpiweekCreated == two.epiweeks.ago)) %>% 
+  dplyr::add_count(CountriesVisited, name = "TotalCases") %>%
+  dplyr::select(CountriesVisited,
+                TotalCases,
+                AlreadyCompletedViaSelfTrace,
+                WhenDidYouReturnToNorthernIreland,
+                DateOfOnset,
+                DateOfSample,
+                CaseNumber,
+                Gender,
+                AgeAtPositiveResult,
+                CreatedOn,
+                AdditionalTravelInformation,
+                MoreDetail,
+                EpiweekCreated,
+                EpiweekReturned
                 #, Status
   ) %>%
   dplyr::select(-c(EpiweekCreated, EpiweekReturned)) %>%
-  arrange(CountriesVisited)
+  dplyr::arrange(CountriesVisited)
 
 #Cumlative report
 culmulative.report <- travellers %>%
-  add_count(CountriesVisited, name = "TotalCases") %>%
-  dplyr::select(CountriesVisited, TotalCases, AlreadyCompletedViaSelfTrace, WhenDidYouReturnToNorthernIreland, DateOfOnset, DateOfSample, CaseNumber, Gender, AgeAtPositiveResult,
-                CreatedOn, AdditionalTravelInformation, MoreDetail, EpiweekCreated, EpiweekReturned
+  dplyr::add_count(CountriesVisited, name = "TotalCases") %>%
+  dplyr::select(CountriesVisited,
+                TotalCases,
+                AlreadyCompletedViaSelfTrace,
+                WhenDidYouReturnToNorthernIreland,
+                DateOfOnset,
+                DateOfSample,
+                CaseNumber,
+                Gender,
+                AgeAtPositiveResult,
+                CreatedOn,
+                AdditionalTravelInformation,
+                MoreDetail,
+                EpiweekCreated,
+                EpiweekReturned
                 #, Status
   ) %>%
   dplyr::select(-c(EpiweekCreated, EpiweekReturned)) %>%
-  arrange(CountriesVisited)
+  dplyr::arrange(CountriesVisited)
 
 
 #to find outlying country combinations
 culmulativereport_nested <- culmulative.report %>%
-  group_by(CountriesVisited) %>%
-  nest()
+  dplyr::group_by(CountriesVisited) %>%
+  tidyr::nest()
 
 #####NOT COMPLETED YET
 ##Trying to split people who've traveled more than one place - 
 #take first word of cpountriesvisited and create df with that if matches countries list, then do the same for second word and so on
 culmulative.reportsorted <- culmulative.report %>%
-  mutate(CountryVector = as.character(CountriesVisited))
+  dplyr::mutate(CountryVector = as.character(CountriesVisited))
 
 ##REMOVE SPACES FROM ALL SPACED COUNTRIES
 culmulative.reportsorted$CountryVector <- gsub("Antigua and Barbuda","AntiguaandBarbuda", culmulative.reportsorted$CountryVector)
@@ -853,6 +911,8 @@ culmulative.reportsorted$CountryVector <- sapply(lapply(strsplit(culmulative.rep
 
 culmulative.reportsorted$CountryVector <- gsub("[^[:alnum:][:blank:]]","", culmulative.reportsorted$CountryVector)
 
+# End Script
+DBI::dbDisconnect(con)
 
-
+message("Data preparation script successfuly executed")
 

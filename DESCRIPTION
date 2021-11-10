@@ -6,10 +6,29 @@ Description: A dashboard to assist the CTC Data team in monitoring COVID-19 case
 License: What license is it under?
 Imports: 
     config (>= 0.3.1),
+    DBI,
+    dplyr,
+    DT,
+    ggplot2,
     golem (>= 0.3.1),
-    shiny (>= 1.6.0)
+    lubridate,
+    magrittr,
+    odbc,
+    pkgload,
+    plotly,
+    processx,
+    shiny (>= 1.6.0),
+    shinycssloaders,
+    shinydashboard,
+    stringr,
+    tidyr
 Encoding: UTF-8
 LazyData: true
 RoxygenNote: 7.1.1
 URL: https://github.com/chris-mcnally95/InternationalTravelReport
 BugReports: https://github.com/chris-mcnally95/InternationalTravelReport/issues
+Suggests: 
+    spelling,
+    testthat (>= 3.0.0)
+Config/testthat/edition: 3
+Language: en-US

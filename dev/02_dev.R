@@ -15,12 +15,25 @@
 
 ## Dependencies ----
 ## Add one line by package you want to add as dependency
-usethis::use_package( "thinkr" )
+usethis::use_pipe()
+usethis::use_package( "shinydashboard" )
+usethis::use_package( "dplyr" )
+usethis::use_package( "lubridate" )
+usethis::use_package( "DT" )
+usethis::use_package( "ggplot2" )
+usethis::use_package( "plotly" )
+usethis::use_package( "DBI" )
+usethis::use_package( "odbc" )
+usethis::use_package( "tidyr" )
+usethis::use_package( "shinycssloaders" )
+usethis::use_package( "stringr" )
 
 ## Add modules ----
 ## Create a module infrastructure in R/
-golem::add_module( name = "name_of_module1" ) # Name of the module
-golem::add_module( name = "name_of_module2" ) # Name of the module
+golem::add_module( name = "home" ) # Name of the module
+golem::add_module( name = "country_frequency" ) # Name of the module
+golem::add_module( name = "country_cases_chart" )
+golem::add_module( name = "reports" )
 
 ## Add helper functions ----
 ## Creates fct_* and utils_*

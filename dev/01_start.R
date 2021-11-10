@@ -21,11 +21,11 @@
 golem::fill_desc(
   pkg_name = "InternationalTravelReport", # The Name of the package containing the App 
   pkg_title = "PKG_TITLE", # The Title of the package containing the App 
-  pkg_description = "PKG_DESC.", # The Description of the package containing the App 
-  author_first_name = "AUTHOR_FIRST", # Your First Name
-  author_last_name = "AUTHOR_LAST", # Your Last Name
-  author_email = "AUTHOR@MAIL.COM", # Your Email
-  repo_url = NULL # The URL of the GitHub Repo (optional) 
+  pkg_description = "A dashboard to assist the CTC Data team in monitoring COVID-19 cases associated with international travel.", # The Description of the package containing the App 
+  author_first_name = "Christopher", # Your First Name
+  author_last_name = "McNally", # Your Last Name
+  author_email = "christopher.mcnally@hscni.net", # Your Email
+  repo_url = "https://github.com/chris-mcnally95/InternationalTravelReport" # The URL of the GitHub Repo (optional) 
 )     
 
 ## Set {golem} options ----
