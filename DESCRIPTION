@@ -3,7 +3,7 @@ Title: PKG_TITLE
 Version: 0.0.0.9000
 Authors@R: person('Christopher', 'McNally', email = 'christopher.mcnally@hscni.net', role = c('cre', 'aut'))
 Description: A dashboard to assist the CTC Data team in monitoring COVID-19 cases associated with international travel.
-License: What license is it under?
+License: MIT + file LICENSE
 Imports: 
     config (>= 0.3.1),
     DBI,
