@@ -27,6 +27,7 @@ usethis::use_package( "odbc" )
 usethis::use_package( "tidyr" )
 usethis::use_package( "shinycssloaders" )
 usethis::use_package( "stringr" )
+usethis::use_package( "dbplyr" )
 
 ## Add modules ----
 ## Create a module infrastructure in R/

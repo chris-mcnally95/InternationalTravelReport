@@ -20,7 +20,7 @@
 ## 
 golem::fill_desc(
   pkg_name = "InternationalTravelReport", # The Name of the package containing the App 
-  pkg_title = "PKG_TITLE", # The Title of the package containing the App 
+  pkg_title = "PHA CTC International Travel Report", # The Title of the package containing the App 
   pkg_description = "A dashboard to assist the CTC Data team in monitoring COVID-19 cases associated with international travel.", # The Description of the package containing the App 
   author_first_name = "Christopher", # Your First Name
   author_last_name = "McNally", # Your Last Name
@@ -33,7 +33,7 @@ golem::set_golem_options()
 
 ## Create Common Files ----
 ## See ?usethis for more information
-usethis::use_mit_license( "Golem User" )  # You can set another license here
+usethis::use_mit_license( "Christopher McNally" )  # You can set another license here
 usethis::use_readme_rmd( open = FALSE )
 usethis::use_code_of_conduct()
 usethis::use_lifecycle_badge( "Experimental" )

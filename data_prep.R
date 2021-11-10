@@ -8,26 +8,97 @@ con <- DBI::dbConnect(odbc::odbc(),
                       database = synapse_database,
                       Authentication="ActiveDirectoryMSI",
                       server = synapse_server)
-                 
 
-# Make Synapse Tables Function
+# Standard SQL Query Function
 getTable <- function(table) {
   query <- paste("SELECT * FROM", table)
   data <- DBI::dbGetQuery(con, query)
-  message(paste0("Data retrieved from ", table))
+  message(paste0("Successfully retrieved retrieved data from ", table))
+  return(data)
+}
+
+# Combined Table Function Using dplyr (requires dbplyr loaded)
+getTableFilteredCombined <- function(table1, table2, table3) {
+  
+  short_locations <- function(x) { 
+    dplyr::tbl(con, x) %>% 
+      dplyr::filter(CreatedOn >= '20210104',
+                    TypeOfPlace == "Travel outside Northern Ireland") %>% 
+      dplyr::select(CollectCallId,
+                    TypeOfPlace,
+                    CountriesVisited,
+                    WhenDidYouLeaveNorthernIreland,
+                    WhenDidYouReturnToNorthernIreland,
+                    AdditionalTravelInformation,
+                    MoreDetail)
+  }
+  
+  short_collectcontactcalls <- function(x) {
+    dplyr::tbl(con, x) %>% 
+      dplyr::filter(CreatedOn >= '20210104') %>%  
+      dplyr::select(Id, 
+                    CaseNumber,
+                    AlreadyCompletedViaSelfTrace)
+  } 
+  
+  short_cases <- function(x) {
+    dplyr::tbl(con, x) %>% 
+      dplyr::filter(CreatedOn >= '20210104') %>%  
+      dplyr::select(ContactId,
+                    CaseNumber,
+                    DateOfOnset,
+                    DateOfSample,
+                    Gender,
+                    AgeAtPositiveResult,
+                    CreatedOn) 
+  }
+  
+  query <- short_locations(table1) %>%
+    dplyr::left_join(short_collectcontactcalls(table2),
+                     by = c("CollectCallId" = "Id"),
+                     suffix = c("Locations", "CollectCloseContacts")) %>%
+    dplyr::left_join(short_cases(table3), 
+                     by = "CaseNumber", 
+                     suffix = c("Merged", "Cases")) %>% 
+    dplyr::filter(#!is.na(CaseNumber),
+      #CaseFileStatus != 'Cancelled'
+    ) 
+  
+  dplyr::show_query(query)
+  data <- as.data.frame(query)
+  message(paste0("Successfully retrieved data from ", table1, " & ", table2, " & ", table3, ". Filtered from 20210104 and Travelled Outside NI"))
+  return(data)
+}
+
+# Get All Cases Information
+getTableFilteredCases <- function(table1) {
+  
+  short_cases <- function(x) {
+    dplyr::tbl(con, x) %>%
+      dplyr::filter(DateOfSample >= '20210101') %>% 
+      dplyr::select(CreatedOn,
+                    CaseNumber,
+                    CaseFileStatus)
+  }
+  
+  query <- short_cases(table1) %>% 
+    dplyr::filter(!is.na(CaseNumber),
+                  !is.na(CreatedOn)) 
+  
+  dplyr::show_query(query)
+  data <- as.data.frame(query)
+  message(paste0("Successfully retrieved data from ", table1, ". Filtered from 20210104"))
   return(data)
 }
 
 # Get Synapse Tables
-locations <- getTable("Locations")
-collectclosecontacts <- getTable("CollectContactsCalls")
-cases <- getTable("cases")
+combinedtables <- getTableFilteredCombined("Locations", "CollectContactsCalls", "Cases") 
+
 wgscases <- getTable("Wgscases")
 
+cases <- getTableFilteredCases("Cases")
 
 # Assign this weeks data
-# This will act as the RAG status cache for all countries
-# Be careful not to overwrite! (check saved .csv if you do)
 epiweek.number <- as.numeric(strftime(Sys.Date(), format = "%V"))
 
 current.epiweek <- paste0("Epiweek", epiweek.number)
@@ -43,26 +114,10 @@ Allcases <- cases %>%
 # Define travellers
 ## Make data frame
 
-travellers <- locations %>%
-  dplyr::filter(TypeOfPlace == "Travel outside Northern Ireland") %>%
-  dplyr::left_join(collectclosecontacts, by = c("CollectCallId" = "Id")) %>%
-  dplyr::left_join(cases, by = "CaseNumber") %>%
-  dplyr::select(ContactId,
-                CountriesVisited.x,
-                WhenDidYouLeaveNorthernIreland,
-                WhenDidYouReturnToNorthernIreland,
-                DateOfOnset,
-                DateOfSample.x,
-                CaseNumber, 
-                Gender.x,
-                AgeAtPositiveResult,
-                CreatedOn,
-                AdditionalTravelInformation,
-                MoreDetail,
-                AlreadyCompletedViaSelfTrace) %>% 
+travellers <- combinedtables %>% 
   dplyr::filter(WhenDidYouReturnToNorthernIreland >= "2021-01-04" & WhenDidYouReturnToNorthernIreland <= Sys.Date()+1) %>% 
-  dplyr::mutate(DateOfSample = as.Date(DateOfSample.x),
-                Gender = as.character(Gender.x)) %>%
+  dplyr::mutate(DateOfSample = as.Date(DateOfSample),
+                Gender = as.character(Gender)) %>%
   dplyr::mutate(EpiweekReturned = paste0("Epiweek", strftime(WhenDidYouReturnToNorthernIreland, format = "%V"))) %>% 
   dplyr::mutate(EpiweekCreated = paste0("Epiweek", strftime(CreatedOn, format = "%V"))) %>% 
   dplyr::left_join(dplyr::select(wgscases,
@@ -87,684 +142,683 @@ travellers$DateOfOnset <- format(travellers$DateOfOnset, format = "%d-%m-%Y")
 #travellers$CreatedOn <- format(travellers$CreatedOn, format = "%d-%m-%Y")
 
 ## Tidy pre drop down data
-travellers$CountriesVisited.x <- lapply(travellers$CountriesVisited.x, stringr::str_trim)
+travellers$CountriesVisited <- lapply(travellers$CountriesVisited, stringr::str_trim)
 
 ### COUNTRY TIDY START ####
-travellers$CountriesVisited.x <- gsub("Southern | . National Citizen Service .|NI> | for work purposes| from saturday 23rd to wed 28th|&", "", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ENGLAND"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "england"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England - Liverpool"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England, liverpool"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England, Liverpool"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England - Manchester"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Liverpool"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "London"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "R.O.I"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "R.O.I."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "R O I"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic Of Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "REPUBLIC OF IRELAND"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "RoI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "republic of Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Edinburgh"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Glasgow"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "edinburgh"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "glasgow"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Glasgow Scotland"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "scotland"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dublin"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Engand"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England (Liverpool)"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England, Manchester"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Reading"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "RoI - Bundoran Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "tenerife- Spain"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Blackpool england"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Cairnryan"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "roi"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England,"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England (London)"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Yorkshire"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI Quigley's Point , Co Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dublin Airport Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Asda Lutterwoth"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "At university in Edinburgh"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "belfast-london gatwick on 03/01/2021"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Belfast to Leeds Bradford and on to Harrogate"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Birmimgham , England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Birmingham , England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Birmingham england"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Birmingham England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Birmingham UK"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Blackpool"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Bridge End,Co Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "BULGARIA"] <- "Bulgaria"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Bridgeend service station Co. Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Buncrana"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Caffery International LTD Coolfore, Ashbourne Co Meath, Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Cairnryan Ferry terminal Scotland"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Canada and Republic of Ireland"] <- "Canada"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Car journey to Dundalk county Louth Ireland for two hours shopping"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "case flew in from England on Friday 25th June"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Case went to stay with his sister Margaret McGrory in Cavan town, Co Cavan. exact address and phone number not available"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Caseys Caravan and Camping Park,Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Central England for work purposes travel postcode LE 671ER and NG31 9SP"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Centreparcs Whinfell Old Sawmill Cottages 2 Whinfell, Whinfell CA10 2DW"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Co Kildare, Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Co Tipperary, Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Cork, RoI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "cornwall England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "CORNWALL ENGLAND"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "County Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "County Louth"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Cyprus & England"] <- "Cyprus"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Cyprus Athens"] <- "Athens, Cyprus"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Day trip to Leeds to visit son for first time this year.I believe I caught COVID from him as his household has tested positive and he’s awaiting results"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Doha , Qatar into Dublin Airport"] <- "Qatar"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Donegal - ROI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Donegal ROI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Donegal,ROI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Donegall. South of Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dubai Dublin"] <- "United Arab Emirate"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dublin airport"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dublin Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dublin ROI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dublin, Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dublin, Republic of Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dundalk"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dundalk ROI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dungloe Site with work. Travelled each day to the work"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Edinburgh, Scotland"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ENgland"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England- I live and work in Liverpool and I came home to Northern Ireland for Christmas"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "england- leeds"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England- Liverpool"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England- Stevenage"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England-Liverpool"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England-London. Did not leave Gatwick airport as stayed in airport hotel-the Hilton"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England - 4 Hall Farm Close SK7 6PJ"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "england - leeds"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England - Leeds"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England - London"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England - United Kingdom"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Travelled from Gatwick to Dublin"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England (150 Scar Lane, Huddersfield HD3 4PY)"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England (Blackpool and Cromer in Norfolk)"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England and also Ibiza"] <- "Balearic Islands, England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England and Scotland"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England and Wales"] <- "England, Wales"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England to NI"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England to NI then onwards to Co. Leitrim ROI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "england to NI trip"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "england to Northern Ireland"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England uk"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Cornwall St Ives"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Scotland"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Working Hindhead Tunnell, London"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England, Cornwall"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England, Huddersfield."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England, London"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England. Scotland"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Farnham in England for work."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Flew from Liverpool to Belfast"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Flight from England to Northern Ireland"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Flights from Liverpool to Belfast"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Flying from Manchester to Dublin. The. Transitioning to Northern Ireland."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "France and England	"] <- "England, France"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "France Monte Carlo, Monacco"] <- "France, Monacco"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "From Glasgow to Belfast"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "G B"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Galway clinic Galway Clinic Doughiska Co. Galway H91HHT0 Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Galway clinic Galway Clinic Doughiska Co. Galway H91HHT0 Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "gatwick- belfast return journey on same day , 03/01/2021"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Gatwick airport to Blackbushe"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Glasgow, UK"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Home from England to Belfast"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I came from London, England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I came from the Ireland on Friday for Christmas."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I came home from Liverpool"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I come back from Poland through Ireland."] <- "Poland, Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I flew from London Gatwick on 20/12/2020"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I flew to Scotland in 13/7 with my husband . I have tested positive in Scotland and an isolating there. I have given all details to Scotland track and trace over the phone"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I flew with BA from Sao Paulo in Brazil to London Heathrow and then to Belfast City."] <- "Brazil, England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I live in republic of ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I traveled from England to my home in NI"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I travelled from Liverpool to Derry airport"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I travelled home from Hungary on Friday 4th December. From work. Ryanair 0720 I think from Budapest."] <- "Hungary"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I travelled home from university at Cambridge to Belfast via Birmingham Airport"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I visited England for work, I got a flight home on Thursday 04 March 2021."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I work in an accounting practice in the Republic of Ireland, but the work page would not accept that address."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "India (New Delhi) to Heathrow then Heathrow to Belfast."] <- "England, India"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "India Ireland"] <- "India"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Iraq - Turkey - London - Belfast City"] <- "England, Iraq, Turkey"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "IRELAND"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ireland - AK Fuels, Dundalk Co Louth"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ireland - Dundalk -County Louth	"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ireland - I work in the ROI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ireland -Cavan"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ireland, Tayto Park"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ireland, Wales and England"] <- "Wales"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Isle of Wight Southampton, England	"] <- "Isle of Wight, England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ivory Coast -Abidjan France-Paris London to Belfast"] <- "England, France, Ivory Coast"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Kerala"] <- "India"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Kilbrew, Ashbourne A84"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Kildare"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "kildare ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Kyrgyzstan Return Journey connecting flights.-Moscow, Amsterdam,Belfast"] <- "Amsterdam, Kyrgyzstan, Moscow"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Lanzarote,Canary Isles"] <- "Canary Islands"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Lebanon Turkey Republic of Ireland"] <- "Turkey"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Letterkenny in Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Live in ROI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Lived in Canada and moved back to North of Ireland	"] <- "Canada"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Liveepool"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "LIVERPOOL"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Liverpool , England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "liverpool england"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Liverpool England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Liverpool in England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Liverpool UK"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Liverpool, England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Liverpool, England (12/07/2021 - 15/07/2021)	"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Liverpool, north Wales"] <- "England, Wales"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Liverpool, UK"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Lives in Donegal, works in NI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Lives in Republic of Ireland and travelled to Warsaw, Poland via Ireland"] <- "Poland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Lives in ROI (Donegal) but works in Londonderry Aghilly Buncrana BT99 5IV"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "london"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "London -GB"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "London GB"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "London, England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "London, GB"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "London."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Luton"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Mainland UK"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Mainland UK - London"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Majorca"] <- "Balearic Islands"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Majorca, spain"] <- "Balearic Islands"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Manchester"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "McBurneys Balyymena"] <- "NI"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "McBurneys to drop off cab."] <- "NI"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Netherlands and England"] <- "England, Netherlands"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "New Delhi to London Heathrow then connecting flight to Belfast after quarantine."] <- "England, India"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Newcastle"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Newcastle - UK"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Nigeria United Kingdom (London)"] <- "England, Nigeria"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "North Tipperary Nenagh"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Northern Ireland to Scotland England Scotland to Northern Ireland"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Playa De Las Americas. Tenerife"] <- "Canary Islands"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "poland"] <- "Poland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "POLAND"] <- "Poland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Poland ROI"] <- "Poland, Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Portsalon co. Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Portsmouth, England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "portugal"] <- "Portugal"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "PORTUGAL"] <- "Portugal"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Portugal R.O.I"] <- "Portugal"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Portugal Rep of Ireland"] <- "Portugal"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Prague to Dublin then to Belfast"] <- "Czech Republic"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "qutar to dublin"] <- "Qatar"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "R.O.I Ann Braden Mullanbuoy Castlefinn"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Rep of Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "REp of Ireland. Day trip for Ice-cream and playpark"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Rep. Ireland - Dublin"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of iIeland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "republic of ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland - Cork City"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland - Letterkenny, Co. Donegal."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland Dublin"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland (Dublin)"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland (Dublin). For Work	"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland and Dubai"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "republic of Ireland Dublin"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland Dublin"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland Monaghan"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "REPUBLIC OF IRELAND TO WORKPLACE"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland Dundalk"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland, Ballyshannon."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland, England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Irelandi"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI- Monaghan"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI-Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI - between Emyvale Co Monaghan and Aughnacloy Co Tyrone"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI - Dublin"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI -Drogheda for work daily"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI Belgium Holland Germany Poland	"] <- "Belgium, Germany, Holland, Poland, Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI dundalk"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI Galway"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI Ballyshannon Co Donegal	"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI North Dublin - Baldoyle"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI On holiday in River Valley Caravan Park, Redcross Co. Wicklow."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI Quigley's Point , Co Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI, England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI, ENGLAND"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "RoI, France, Germany, Bulgaria"] <- "Bulgaria, France, Germany, Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI, Germany"] <- "Germany"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI: works in the ROI. Last visited work station on 12-14/04/2021"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI10"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Romania and ROI"] <- "Romania"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Roscommon, County Roscommon	"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Sagres, Portugal"] <- "Portugal"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "SCOTLAND"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland England"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland & England"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland (Cairnryan Ferry port) England Blackpool 18/06/21 - 21st/06.21 Cromer (Norfolk) 21/06/21 - 25/06/21 Blackpool 25/06/21 - 30/06/21 30/06/21 travelled directly up to Cairnryan to return home."] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland (Edinburgh) Case is a University student in Edinburgh	"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland and England"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland Cairnryan to Belfast"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland on the stenaline boat . I remained in my lorry while in Scotland"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland England"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland England"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland, England"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland, England, Wales"] <- "England, Scotland, Wales"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland, Newcastle under lyme, Bournemouth. Carlisle Ferry back from Cairnryan."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland. Glasgow city	"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland. ROI."] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Shanghai London"] <- "China"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "South Africa Durban Connections to Johannesburg and Doha Final destination London Heathrow"] <- "England, Qatar, South Africa"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "South of ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "SOUTHERN IRELAND"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "SPAIN"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spain-Balearic island"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spain - Balearic Isle - Ibiza"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spain Marbella"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spain via ROI"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spain Mallorca"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spain Murcia"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spain ROI"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spent one month in Spain with work Flew home on 06/07/2021"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Stayed in my holiday home in Donegal - Republic of Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Stobarts Lutterworth Hunter Boulevard Lutterworth LE17 4XN England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "STRETFORD MANCHESTER"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Sudan via Istanbul"] <- "Sudan, Turkey"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Tenerife"] <- "Canary Islands"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Traveled from Liverpool to northern Ireland and returned to Liverpool within 24hours"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Traveled from Wales to Northern Ireland"] <- "Wales"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled from Alicante To Bristol airport From Bristol to Belfast"] <- "England, Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "travelled from dublin airport direct to istanbul airport on 25th March - no detail of flight but was at 16.15 or 16.45 hrs. Travelled from Istanbul sabiha gokcen airport on 4th April to london Standsted. Travelled from London stansted to Belfast international on 5th april"] <- "England, Turkey"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled from England (London) to Belfast Northern Ireland"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled from Greece to Dublin, Ireland 14th July"] <- "Greece"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled from London - works in London."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled from London, England to Belfast, Northern Ireland	"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled from Oslo Norway on Sunday 20th Dec 2020 to Dublin airport via Germany (Frankfurt)"] <- "Germany, Norway, Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled to Majorca on Monday 12/07/2021 and returned on Friday 16/07/2021."] <- "Balearic Islands"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelling home from Ibiza"] <- "Balearic Islands"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Uganda-Holland-England"] <- "England, Holland, Uganda"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "UK (LONDON)"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Visit to family home in Donegal for Christmas: address: Gortmacoll Milford Donegal F92 K163"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Visit to London from 10th December to 16th December inclusive"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Warrington Cheshire England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Warsaw, Poland, via Dublin. Case lives in the Republic of Ireland"] <- "Poland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Was in Qatar. Travelled from Doha to Dublin on 25/03/21. Has been escalated to CL. Aware of flight-all travellers being followed up due to new variant detected on flight."] <- "Qatar"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Waterford - Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Wolverhampton Leeds Selby Doncaster"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Worked in Boots Pharmacy Letterkenny Retail Park, Co. Donegal on 22/12/2020. Currently a locum pharmacist with Clarity Locums."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Working in Dublin Have used HSE track and trace app"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Working in Industrial estate in Norwich"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Works in ROI. Worked Monday to Friday last week and Monday to Wednesday this week."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Zimbabwe Zambia Ethopia London Heathrow Liverpool London Liverpool Belfast"] <- "England, Ethopia, Zambia, Zimbabwe"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "150 Scar Lane, Huddersfield HD3 4PY, England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Amsterdam Singapore Jakata Bali"] <- "Amsterdam, Indonesia, Singapore"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ashbourne ROI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Azerbaijan Turkey England"] <- "Azerbaijan, England, Turkey"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Belarus England"] <- "Belarus, England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "belfast-london gatwick on 03/01/2021."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Benidorm"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Bermuda. England (Gatwick )"] <- "Bermuda"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Bridgeend service station Co. Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Brussels Belgium"] <- "Belgium"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Caffery International LTD Coolfore, Ashbourne Co Meath, Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Canada (Toronto) Mexico (Cancun)"] <- "Canada, Mexico"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Case lives in ROI ( Donegal) and works in Londonderry"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Central England for work purposes travel postcode LE 671ER and NG31 9SP"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Centreparcs Whinfell Old Sawmill Cottages 2 Whinfell, Whinfell CA10 2DW"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Cyprus Athens"] <- "Cyprus, Greece"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dubai Dublin"] <- "United Arab Emirate"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "dublin ireland bristol england wales"] <- "England, ROI, Wales"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Egypt (Cairo) France (Paris CDG) Holland (Amsterdam Schippol)"] <- "Egypt, France, Holland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England - 4 Hall Farm Close SK7 6PJ"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Travelled from Gatwick to Dublin	"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Cornwall St Ives"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Working Hindhead Tunnell, London"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "France Monte Carlo, Monacco"] <- "France, Monacco"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Galway clinic Galway Clinic Doughiska Co. Galway H91HHT0 Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Galway clinic Galway Clinic Doughiska Co. Galway H91HHT0 Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Gran Canaria"] <- "Grand Canary Island"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I visited England for work, I got a flight home on Thursday 04 March 2021."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ibiza"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "India Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ireland - Dundalk -County Louth"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Isle of Wight Southampton, England"] <- "Isle of Wight"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England / Scotland"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England for Euro football final on Sunday 11 July"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Flew back from London"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Flew from London City Airport to Belfast City Airport on Friday 16th July (symptoms developed later that evening)."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Haven caravan resort in Fleetwood and into blackpool also Blackpool pleasure beach on Tuesday"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I visited my mobile home in Donegal rep of ireland with my household"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland ,Greenore Golf Club,Dundalk,A91 RY10,County Louth."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == " Scotland"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England- 12/7/2021-to Manchester. Returned on 15/7/2021"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Travelled from Gatwick to Dublin"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Cornwall St Ives"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Working Hindhead Tunnell, London"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "France and England"] <- "England, France"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I visited England for work, I got a flight home on Thursday 04 March 2021."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Liverpool, England (12/07/2021 - 15/07/2021)"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Works in ROI. Worked Monday to Friday last week and Monday to Wednesday this week."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Wales/England"] <- "England, Wales"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Wolverhampton Leeds Selby Doncaster"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "United Kingdom Skegness"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Sweden germany ROI"] <- "Germany, Ireland, Sweden"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spain , Ibiza"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Donegal, Republic of Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Donegal, ROI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Edinburgh in Scotland"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England - Manchester and Cornwall"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Scotland"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England, Denmark, England, Wales, Scotland, N Ireland"] <- "Denmark, England, Scotland, Wales"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Fleetwood haven caravan park Blackpool Stayed in premier Inn in dumfries on Thursday 8th July"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I was in Edinburgh."] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ireland - Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Lived in Canada and moved back to North of Ireland"] <- "Canada"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Majorca Balearic Islands"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of  Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland  Dublin"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland  (Dublin)"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland (Dublin). For Work"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland Dundalk"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI - Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI  -Drogheda for work daily"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI. Counties Galway and Silgo"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Rossnowlagh, Co. Donegal since Friday 16th July"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland (Edinburgh) Case is a University student in Edinburgh"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "South Wales (Cardiff) 3/7 to 9/7 Cornwall (Padstow) 9/7 to 16/7 North Wales (Llandudno) 16/7 to 18/7"] <- "England, Wales"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "travelled from dublin airport direct to istanbul airport on 25th March - no detail of flight but was at 16.15 or 16.45 hrs. Travelled from Istanbul sabiha gokcen airport on 4th April to london Standsted. Travelled from London stansted to Belfast international on 5th april"] <- "England, Turkey"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled from Alicante To Bristol airport From Bristol to Belfast"] <- "England, Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled from London, England to Belfast, Northern Ireland"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled from Zakynthos to london Gatwick and then london Gatwick to Northern Ireland"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled to England with work."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Wolverhampton Leeds Selby Doncaster"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Working in Dublin Have used HSE track and trace app"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI North Dublin - Baldoyle"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI On holiday in River Valley Caravan Park, Redcross Co. Wicklow."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Roscommon, County Roscommon	"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland. Glasgow city"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spain Ibiza "] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == " England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == " USA"] <- "USA"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Balearic Islands Majorica"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Balearic Islands Majorca"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Balearics Ibiza"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Bundoran in Ireland."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Bundoran, co donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Dublin Wales Blackpool"] <- "England, Ireland, Wales"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Emgland"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England - Cornwall"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England   cornwell stayed at self-catering cottage "] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England ( Burgh by Sands just outside Carlisle )"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England (Manchester)"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England Scotland"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England. From Friday 9 July to Friday 16 July."] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Flight home from Heathrow - Belfast"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I visited Porsteward myself 2 weeks ago by car."] <- "NI"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Kilkenny, Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Liverpool 2nd to 16th July"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "London Luton"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "London Brighton"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Mallorca"] <- "Balearic Islands"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Mallorca to Belfast city airport on 21st July"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Menorca"] <- "Balearic Islands"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Mullaghmore Beach, Sligo"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland (Dublin)"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland,"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland, Co Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of ireland, donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Republic of Ireland, in county Waterford"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "RO1"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Roi"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI (Donegal)"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI Ballyshannon Co Donegal"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI Belgium Holland Germany Poland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Roscommon, County Roscommon"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Rosguill Holiday Park, Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Rosguill Holiday Park Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland Travelled out 31.07.21 Travelled Home 07.08.21"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Scotland, england"] <- "England, Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "South of Ireland for a staycation"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spain  magluf jet 2 hoildays hotel and transfer to hotel package"] <- "Balearic Islands"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spain Ibiza"] <- "Balearic Islands, Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Spain islands"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "travelled from dublin airport direct to istanbul airport on 25th March - no detail of flight but was at 16.15 or 16.45 hrs. Travelled from Istanbul sabiha gokcen airport on  4th April to london Standsted. Travelled from London stansted to Belfast international on 5th april"] <- "England, Turkey"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled to Majorca departed Monday July 12th and returned Friday July 16th"] <- "Balearic Islands"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Travelled to Waterford, Dungarvan on Saturday 17th July. Stayed in rented accommodation, no one else present other than the family."] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "United Kingdom"] <- "UK"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Visited Flushing and Falmouth Cornwall"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Wales. Haven - Hafan Y Mor holiday Park. 9th to 19th July 2021 Visited the entertainment settings including: The Cove, The Boardwalk, Swimming Pool, pottery class, outdoor activities."] <- "Wales"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Working in Dublin Have used HSE track and trace app"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Majorca"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "ROI"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Went on Stena Ferry to Cairnryan on a day trip on 22nd July"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "England\nNigeria"] <- "Nigeria"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "United Kingdom\r\nCity - England"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ireland: Carlingford"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I returned from France on July 6th"] <- "France"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "I visited England for my 19th birthday with 3 other friends who are also positive for the virus. We visited Thursday 29th July- Monday 2nd August"] <- "England"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Stenaline \r\n7.30am belfast to Cairnryan  1/08/2021"] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Ireland. Close contact of a family member who had travelled from london"] <- "Ireland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Visited Edinburgh for a wedding on 23/07/2021.\r\nI have had notification that I was in contact with someone there with a positive covid result."] <- "Scotland"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "Majorca, Spain"] <- "Spain"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "United Arab Emirate"] <- "United Arab Emirates"
-travellers$CountriesVisited.x[travellers$CountriesVisited.x == "case has travelled form Hydrabad in India and has travelled through bangalore to England . He then travelled onto Belfast City Airport"] <- "India"
-travellers$CountriesVisited.x <- gsub("ROI", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Moscow", "Russia", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Amsterdam", "Netherlands", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Balearic Islands", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("USA", "United States", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("GB", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("UK", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Dubai", "United Arab Emirates", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("dubai", "United Arab Emirates", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("ROI", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("RoI", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Roi", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("RIO", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("RO1", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("roi", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("R.O.I.", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("R.O.I", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Republic of Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("republic of ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("REPUBLIC OF IRELAND", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("REPUBLIC OF iRELAND", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Republci of Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Rep. Of Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Dublin", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("County Donegal Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Ireland - Donegal", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Co Louth, 15mins away to visit my parents and family on sunday 27th", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Car journey to Dundalk county Louth Ireland for two hours shopping", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Ireland - Letterkenny, Co. Donegal.", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Visit to family home in Donegal for Christmas: address: Gortmacoll Milford Donegal F92 K163", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Flight from India to LHR\nLHR to BHD", "India", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("case has travelled form Hydrabad in India and has travelled through bangalore to England . He then travelled onto Belfast City Airport", "India", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("India, England, N. Ireland", "India", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("India, LHR, N. Ireland", "India", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Ibiza", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("United Kingdom Skegness", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Uganda-Holland-England", "Uganda", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Teneriffe", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("New Delhi to London Heathrow then connecting flight to Belfast after quarantine.", "India", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Galway clinic Galway Clinic Doughiska Co. Galway H91HHT0 Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("travelled from dublin airport direct to istanbul airport on 25th March - no detail of flight but was at 16.15 or 16.45 hrs. Travelled from Istanbul sabiha gokcen airport on  4th April to london Standsted. Travelled from London stansted to Belfast international on 5th april", "Turkey", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Mallorca - Balearic Islands", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("England  - Liverpool", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Liverpool", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("London  - England", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("London, England", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("London", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("ENGLAND", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("england", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Portsmouth, England", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Manchester, England", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Birmingham UK", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("England-London. Did not leave Gatwick airport as stayed in airport hotel-the Hilton", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Netherlands and England|Holland", "Netherlands", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("150 Scar Lane, Huddersfield HD3 4PY, England", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Altan Loch Hotel Donegal", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("America and london", "United States", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Ardmore\nCounty Waterford", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Ashbourne Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("SPAIN", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Balearic Island  Majorca.", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Balearic Islands  Majorca.", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Balearic Islands Majorca", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Balearic Islands Majorica", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Balearic Mallorca!", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Balearics Spain", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Bath England", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Belaric islands Santa ponsa", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Belarus England", "Belarus", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("belfast-london gatwick on 03/01/2021.", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Belfast city airport to Edinburgh \n& return", "Scotland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("belfast city airport to Exeter", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Belfast City Airport to Exeter , England\n\n& return", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Belfast to Glascow and return", "Scotland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Benidorm", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Berlin, Amsterdam and Dublin-all connecting flights commencing 28/5/21. Employed via German Government and currently residing in Bangor. Self isolating in Bangor", "Germany", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Bermuda and Gatwick England", "Bermuda", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Bermuda. England (Gatwick )", "Bermuda", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Birmingham United Kingdom", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Blackpool", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Blackpool \nflew via manchester", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Blackpool england", "England", travellers$CountriesVisited.x)
-#travellers$CountriesVisited.x <- gsub("Bosnia", "Bosnia and Herzegovina", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("BRAY CO wicklow", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Brazil\r\nPortugal\r\nIreland", "Brazil", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Bridge End,Co Donegal", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Bridgeend service station Co. Donegal", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Brussels Belgium", "Belgium", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Buncrana", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Bermuda. England (Gatwick )", "Bermuda", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Bundoran in Ireland.", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Bundoran\nIreland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Bundoran, co donegal", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Bundoran. Co. Donegal Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Caffery International LTD Coolfore, Ashbourne Co Meath, Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Canada and Ireland", "Canada", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("case flew in from England on Friday 25th June", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("case has travelled form Hydrabad in India and has travelled through bangalore to London . He then travelled onto Belfast City Airport", "India", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Case lives in Ireland ( Donegal) and works in Londonderry", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Caseys Caravan and Camping Park,Donegal", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Central England for work purposes travel postcode LE 671ER and NG31 9SP", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Centreparcs Whinfell Old Sawmill Cottages 2 Whinfell, Whinfell CA10 2DW", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Claas uk by ferry Belfast to England then home holly head to Dublin.o", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Co Cork Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Co Cork, Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Co Donegal\n1.. moville - flat no address at Rigney Birthday party\n\n2 ... 4 Cnocglass Fanad family holiday house", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Co Kildare, Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Co. Leitrim Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Co.Donegal R.Ireland in Fahan", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Cork, Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("cornwall England", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("CORNWALL ENGLAND", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("County Donegal", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("County Donegall", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("County Kerry\nIreland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("County Louth", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Creeslough\n Donegal\nIreland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Crete", "Greece", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Crete,", "Greece", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Cyprus & England", "Cyprus", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Cyprus Athens", "Cyprus", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Day trip to Leeds to visit son for first time this year.I believe I caught COVID from him as his household has tested positive and he’s awaiting results", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Derry", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("England, Scotland", "Scotland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("majorca", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Athens, Cyprus", "Greece, Cyprus", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Berlin, Amsterdam and Ireland-all connecting flights commencing 28/5/21. Employed via German Government and currently residing in Bangor. Self isolating in Bangor", "Germany, Netherlands", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Crete", "Greece", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("United Kingdom\r\nCity - England", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("England and America|Flight from Philedelphia to Ireland|United States Colorado and New Mexico", "United States", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("wales", "Wales", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain, Spain", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain Spain", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain magluf   with jet 2 hoildays  transfer and hotel", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("spain", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Scotland - Edinburgh", "Scotland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Scotland - Belfast- Edinburgh", "Scotland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Scotland - Inverness", "Scotland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Scotland - work in Scotland Monday to Friday weekly. Travel to Edinburgh Monday AM, return Friday PM", "Scotland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Scotland - Inverness", "Scotland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Glasgow,England|scotland \nEngland", "Scotland, England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Scotland \nEngland", "Scotland, England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Scotland \r\nEngland\r\nWales", "Scotland, England, Wales", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Scotland spean bridge", "Scotland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("scotland\nEngland", "Scotland, England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Scotland, Edinburgh", "Scotland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("scotland, England", "Scotland, England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Scotland. Student in Glasgow University", "Scotland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain-Alcudia", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain - MALLORCA", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain  magluf  jet 2 hoildays hotel and transfer to hotel package|Went To Malaga in Spain|Mallorca - Spain|MAJORCA", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain (Malaga)", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain 1 month", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain Alcudia\nfrom 10th-20th July 2021 inclusive. No information about flights or accommodation available as son booked everything.", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain and England", "Spain, England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain mainland", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain\nFrance\nIreland", "Spain, France, Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Spain (Malaga)|Majorca Spain", "Spain", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Belarus, England", "Belarus", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Donegal - 4 Cnocglass, Fanad\nby car with famlly members", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Donegal in Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Donegal Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Donegal\nCreeslough", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Downings Republic of ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("dublin Ireland", "Ireland", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("England -  England", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("England - England", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("England - Manchester", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("England United States", "England, United States", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("from Guernsey to Belfast via Gatwick", "Guernsey", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("England for 1 week. 17/07/21-24/07/21. Travelled to Gatwick Airport from Northern Ireland. Stayed in Citadines Apartment Hotel, Northumberland Road, England.|I visted bournemouth|England   cornwell stayed at self-catering cottage|uk|Flew to Bristol on 22.7.21.", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Ireland  Ireland city|Ireland Ireland|Enniscrone, Co Sligo, Ireland|Ireland (Donegal)", "ROI", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("My daughters house, Cork|Ireland, day trip to Rossnawlagh beach in Donegal on 25/7/21|Ireland (Co. Clare/Co.Kerry)|Ireland - Premier Inn airport hotel|Ireland /SLIGO|Ireland-|Ireland - bundoron, co. Donegal|Ireland Rosguill Holiday Park Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland +353 74 915 5766|Ireland, Donegal, Greencastle|Ireland: Carlingford|Ireland. Close contact of a family member who had travelled from london|Ireland  Ireland city|Galway,Ireland|visited his mother in north of ireland-present in north since 6/8/21-8/8/21|Ireland County Sligo|Ireland Rosguill Holiday Park Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland +353 74 915 5766|Rosguill Holiday Park Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland Travelled out 31.07.21 Travelled Home 07.08.21|Sligo|Rosguill Holiday Park Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland Travelled out 31.07.21 Travelled Home 07.08.21|Ireland Co. Donegal Ardara|Ireland Rosguill Holiday Park Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland +353 74 915 5766", "ROI", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub(("Greece,|Greece, Cyprus"), "Greece", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Wales England|England to Northern Ireland|England, England to be exact|Visited England|England, bath|England, England|United Kingdom only|England. England from 26/07/2021 to 29/07/2021 however symptoms only started late on the Friday night|To belfast from stansted|Newcastle upon Tyne|Flew from England (Louton Airport) to Belfast International Airport on  Tuesday the 3rd of August.|England England|Flight from England Gatwick to Belfast on 01/08/2021 at 18:10|Claas England by ferry Belfast to England then home holly head to Ireland.o|England - Ireland|England  flew via manchester|England (Portsmouth)|England (via Scotland)|I went to England on 2nd-7th July.|I visited England for my 19th birthday with 3 other friends who are also positive for the virus. We visited Thursday 29th July- Monday 2nd August|England  flew via manchester|England (liverpool) ", "England", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Berlin, Netherlands and ROIall connecting flights commencing 28/5/21. Employed via German Government and currently residing in Bangor. Self isolating in Bangor", "Berlin, Netherlands, ROI", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("England  Connah's Quay, Wales (via Ireland and England Airport)", "Wales", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Lives in Ireland and travelled to Warsaw, Poland via Ireland", "Wales", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("England Jersey channel islands", "England, Channel Islands", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Irelandl|Ireland Lives in Donegal", "ROI", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Mali France", "France", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("Ireland", "ROI", travellers$CountriesVisited.x)
-travellers$CountriesVisited.x <- gsub("United States", "USA", travellers$CountriesVisited.x)
+travellers$CountriesVisited <- gsub("Southern | . National Citizen Service .|NI> | for work purposes| from saturday 23rd to wed 28th|&", "", travellers$CountriesVisited)
+travellers$CountriesVisited[travellers$CountriesVisited == "ENGLAND"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "england"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England - Liverpool"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England, liverpool"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England, Liverpool"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England - Manchester"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Liverpool"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "London"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "R.O.I"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "R.O.I."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "R O I"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic Of Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "REPUBLIC OF IRELAND"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "RoI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "republic of Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Edinburgh"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Glasgow"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "edinburgh"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "glasgow"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Glasgow Scotland"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "scotland"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dublin"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Engand"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England (Liverpool)"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England, Manchester"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Reading"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "RoI - Bundoran Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "tenerife- Spain"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Blackpool england"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Cairnryan"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "roi"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "England,"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England (London)"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Yorkshire"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI Quigley's Point , Co Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dublin Airport Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Asda Lutterwoth"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "At university in Edinburgh"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "belfast-london gatwick on 03/01/2021"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Belfast to Leeds Bradford and on to Harrogate"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Birmimgham , England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Birmingham , England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Birmingham england"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Birmingham England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Birmingham UK"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Blackpool"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Bridge End,Co Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "BULGARIA"] <- "Bulgaria"
+travellers$CountriesVisited[travellers$CountriesVisited == "Bridgeend service station Co. Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Buncrana"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Caffery International LTD Coolfore, Ashbourne Co Meath, Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Cairnryan Ferry terminal Scotland"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Canada and Republic of Ireland"] <- "Canada"
+travellers$CountriesVisited[travellers$CountriesVisited == "Car journey to Dundalk county Louth Ireland for two hours shopping"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "case flew in from England on Friday 25th June"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Case went to stay with his sister Margaret McGrory in Cavan town, Co Cavan. exact address and phone number not available"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Caseys Caravan and Camping Park,Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Central England for work purposes travel postcode LE 671ER and NG31 9SP"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Centreparcs Whinfell Old Sawmill Cottages 2 Whinfell, Whinfell CA10 2DW"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Co Kildare, Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Co Tipperary, Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Cork, RoI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "cornwall England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "CORNWALL ENGLAND"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "County Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "County Louth"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Cyprus & England"] <- "Cyprus"
+travellers$CountriesVisited[travellers$CountriesVisited == "Cyprus Athens"] <- "Athens, Cyprus"
+travellers$CountriesVisited[travellers$CountriesVisited == "Day trip to Leeds to visit son for first time this year.I believe I caught COVID from him as his household has tested positive and he’s awaiting results"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Doha , Qatar into Dublin Airport"] <- "Qatar"
+travellers$CountriesVisited[travellers$CountriesVisited == "Donegal - ROI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Donegal ROI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Donegal,ROI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Donegall. South of Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dubai Dublin"] <- "United Arab Emirate"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dublin airport"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dublin Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dublin ROI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dublin, Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dublin, Republic of Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dundalk"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dundalk ROI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dungloe Site with work. Travelled each day to the work"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Edinburgh, Scotland"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ENgland"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England- I live and work in Liverpool and I came home to Northern Ireland for Christmas"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "england- leeds"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England- Liverpool"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England- Stevenage"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England-Liverpool"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England-London. Did not leave Gatwick airport as stayed in airport hotel-the Hilton"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England - 4 Hall Farm Close SK7 6PJ"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "england - leeds"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England - Leeds"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England - London"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England - United Kingdom"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Travelled from Gatwick to Dublin"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England (150 Scar Lane, Huddersfield HD3 4PY)"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England (Blackpool and Cromer in Norfolk)"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England and also Ibiza"] <- "Balearic Islands, England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England and Scotland"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "England and Wales"] <- "England, Wales"
+travellers$CountriesVisited[travellers$CountriesVisited == "England to NI"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England to NI then onwards to Co. Leitrim ROI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "england to NI trip"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "england to Northern Ireland"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England uk"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Cornwall St Ives"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Scotland"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Working Hindhead Tunnell, London"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England, Cornwall"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England, Huddersfield."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England, London"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England. Scotland"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Farnham in England for work."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Flew from Liverpool to Belfast"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Flight from England to Northern Ireland"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Flights from Liverpool to Belfast"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Flying from Manchester to Dublin. The. Transitioning to Northern Ireland."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "France and England	"] <- "England, France"
+travellers$CountriesVisited[travellers$CountriesVisited == "France Monte Carlo, Monacco"] <- "France, Monacco"
+travellers$CountriesVisited[travellers$CountriesVisited == "From Glasgow to Belfast"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "G B"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Galway clinic Galway Clinic Doughiska Co. Galway H91HHT0 Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Galway clinic Galway Clinic Doughiska Co. Galway H91HHT0 Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "gatwick- belfast return journey on same day , 03/01/2021"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Gatwick airport to Blackbushe"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Glasgow, UK"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Home from England to Belfast"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "I came from London, England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "I came from the Ireland on Friday for Christmas."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "I came home from Liverpool"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "I come back from Poland through Ireland."] <- "Poland, Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "I flew from London Gatwick on 20/12/2020"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "I flew to Scotland in 13/7 with my husband . I have tested positive in Scotland and an isolating there. I have given all details to Scotland track and trace over the phone"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "I flew with BA from Sao Paulo in Brazil to London Heathrow and then to Belfast City."] <- "Brazil, England"
+travellers$CountriesVisited[travellers$CountriesVisited == "I live in republic of ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "I traveled from England to my home in NI"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "I travelled from Liverpool to Derry airport"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "I travelled home from Hungary on Friday 4th December. From work. Ryanair 0720 I think from Budapest."] <- "Hungary"
+travellers$CountriesVisited[travellers$CountriesVisited == "I travelled home from university at Cambridge to Belfast via Birmingham Airport"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "I visited England for work, I got a flight home on Thursday 04 March 2021."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "I work in an accounting practice in the Republic of Ireland, but the work page would not accept that address."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "India (New Delhi) to Heathrow then Heathrow to Belfast."] <- "England, India"
+travellers$CountriesVisited[travellers$CountriesVisited == "India Ireland"] <- "India"
+travellers$CountriesVisited[travellers$CountriesVisited == "Iraq - Turkey - London - Belfast City"] <- "England, Iraq, Turkey"
+travellers$CountriesVisited[travellers$CountriesVisited == "ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "IRELAND"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ireland - AK Fuels, Dundalk Co Louth"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ireland - Dundalk -County Louth	"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ireland - I work in the ROI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ireland -Cavan"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ireland, Tayto Park"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ireland, Wales and England"] <- "Wales"
+travellers$CountriesVisited[travellers$CountriesVisited == "Isle of Wight Southampton, England	"] <- "Isle of Wight, England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ivory Coast -Abidjan France-Paris London to Belfast"] <- "England, France, Ivory Coast"
+travellers$CountriesVisited[travellers$CountriesVisited == "Kerala"] <- "India"
+travellers$CountriesVisited[travellers$CountriesVisited == "Kilbrew, Ashbourne A84"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Kildare"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "kildare ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Kyrgyzstan Return Journey connecting flights.-Moscow, Amsterdam,Belfast"] <- "Amsterdam, Kyrgyzstan, Moscow"
+travellers$CountriesVisited[travellers$CountriesVisited == "Lanzarote,Canary Isles"] <- "Canary Islands"
+travellers$CountriesVisited[travellers$CountriesVisited == "Lebanon Turkey Republic of Ireland"] <- "Turkey"
+travellers$CountriesVisited[travellers$CountriesVisited == "Letterkenny in Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Live in ROI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Lived in Canada and moved back to North of Ireland	"] <- "Canada"
+travellers$CountriesVisited[travellers$CountriesVisited == "Liveepool"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "LIVERPOOL"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Liverpool , England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "liverpool england"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Liverpool England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Liverpool in England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Liverpool UK"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Liverpool, England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Liverpool, England (12/07/2021 - 15/07/2021)	"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Liverpool, north Wales"] <- "England, Wales"
+travellers$CountriesVisited[travellers$CountriesVisited == "Liverpool, UK"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Lives in Donegal, works in NI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Lives in Republic of Ireland and travelled to Warsaw, Poland via Ireland"] <- "Poland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Lives in ROI (Donegal) but works in Londonderry Aghilly Buncrana BT99 5IV"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "london"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "London -GB"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "London GB"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "London, England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "London, GB"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "London."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Luton"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Mainland UK"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Mainland UK - London"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Majorca"] <- "Balearic Islands"
+travellers$CountriesVisited[travellers$CountriesVisited == "Majorca, spain"] <- "Balearic Islands"
+travellers$CountriesVisited[travellers$CountriesVisited == "Manchester"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "McBurneys Balyymena"] <- "NI"
+travellers$CountriesVisited[travellers$CountriesVisited == "McBurneys to drop off cab."] <- "NI"
+travellers$CountriesVisited[travellers$CountriesVisited == "Netherlands and England"] <- "England, Netherlands"
+travellers$CountriesVisited[travellers$CountriesVisited == "New Delhi to London Heathrow then connecting flight to Belfast after quarantine."] <- "England, India"
+travellers$CountriesVisited[travellers$CountriesVisited == "Newcastle"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Newcastle - UK"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Nigeria United Kingdom (London)"] <- "England, Nigeria"
+travellers$CountriesVisited[travellers$CountriesVisited == "North Tipperary Nenagh"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Northern Ireland to Scotland England Scotland to Northern Ireland"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Playa De Las Americas. Tenerife"] <- "Canary Islands"
+travellers$CountriesVisited[travellers$CountriesVisited == "poland"] <- "Poland"
+travellers$CountriesVisited[travellers$CountriesVisited == "POLAND"] <- "Poland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Poland ROI"] <- "Poland, Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Portsalon co. Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Portsmouth, England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "portugal"] <- "Portugal"
+travellers$CountriesVisited[travellers$CountriesVisited == "PORTUGAL"] <- "Portugal"
+travellers$CountriesVisited[travellers$CountriesVisited == "Portugal R.O.I"] <- "Portugal"
+travellers$CountriesVisited[travellers$CountriesVisited == "Portugal Rep of Ireland"] <- "Portugal"
+travellers$CountriesVisited[travellers$CountriesVisited == "Prague to Dublin then to Belfast"] <- "Czech Republic"
+travellers$CountriesVisited[travellers$CountriesVisited == "qutar to dublin"] <- "Qatar"
+travellers$CountriesVisited[travellers$CountriesVisited == "R.O.I Ann Braden Mullanbuoy Castlefinn"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Rep of Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "REp of Ireland. Day trip for Ice-cream and playpark"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Rep. Ireland - Dublin"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of iIeland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "republic of ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland - Cork City"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland - Letterkenny, Co. Donegal."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland Dublin"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland (Dublin)"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland (Dublin). For Work	"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland and Dubai"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "republic of Ireland Dublin"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland Dublin"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland Monaghan"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "REPUBLIC OF IRELAND TO WORKPLACE"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland Dundalk"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland, Ballyshannon."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland, England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Irelandi"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI- Monaghan"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI-Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI - between Emyvale Co Monaghan and Aughnacloy Co Tyrone"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI - Dublin"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI -Drogheda for work daily"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI Belgium Holland Germany Poland	"] <- "Belgium, Germany, Holland, Poland, Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI dundalk"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI Galway"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI Ballyshannon Co Donegal	"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI North Dublin - Baldoyle"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI On holiday in River Valley Caravan Park, Redcross Co. Wicklow."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI Quigley's Point , Co Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI, England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI, ENGLAND"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "RoI, France, Germany, Bulgaria"] <- "Bulgaria, France, Germany, Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI, Germany"] <- "Germany"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI: works in the ROI. Last visited work station on 12-14/04/2021"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI10"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Romania and ROI"] <- "Romania"
+travellers$CountriesVisited[travellers$CountriesVisited == "Roscommon, County Roscommon	"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Sagres, Portugal"] <- "Portugal"
+travellers$CountriesVisited[travellers$CountriesVisited == "SCOTLAND"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland England"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland & England"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland (Cairnryan Ferry port) England Blackpool 18/06/21 - 21st/06.21 Cromer (Norfolk) 21/06/21 - 25/06/21 Blackpool 25/06/21 - 30/06/21 30/06/21 travelled directly up to Cairnryan to return home."] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland (Edinburgh) Case is a University student in Edinburgh	"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland and England"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland Cairnryan to Belfast"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland on the stenaline boat . I remained in my lorry while in Scotland"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland England"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland England"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland, England"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland, England, Wales"] <- "England, Scotland, Wales"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland, Newcastle under lyme, Bournemouth. Carlisle Ferry back from Cairnryan."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland. Glasgow city	"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland. ROI."] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Shanghai London"] <- "China"
+travellers$CountriesVisited[travellers$CountriesVisited == "South Africa Durban Connections to Johannesburg and Doha Final destination London Heathrow"] <- "England, Qatar, South Africa"
+travellers$CountriesVisited[travellers$CountriesVisited == "South of ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "SOUTHERN IRELAND"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "SPAIN"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spain-Balearic island"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spain - Balearic Isle - Ibiza"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spain Marbella"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spain via ROI"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spain Mallorca"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spain Murcia"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spain ROI"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spent one month in Spain with work Flew home on 06/07/2021"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Stayed in my holiday home in Donegal - Republic of Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Stobarts Lutterworth Hunter Boulevard Lutterworth LE17 4XN England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "STRETFORD MANCHESTER"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Sudan via Istanbul"] <- "Sudan, Turkey"
+travellers$CountriesVisited[travellers$CountriesVisited == "Tenerife"] <- "Canary Islands"
+travellers$CountriesVisited[travellers$CountriesVisited == "Traveled from Liverpool to northern Ireland and returned to Liverpool within 24hours"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Traveled from Wales to Northern Ireland"] <- "Wales"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled from Alicante To Bristol airport From Bristol to Belfast"] <- "England, Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "travelled from dublin airport direct to istanbul airport on 25th March - no detail of flight but was at 16.15 or 16.45 hrs. Travelled from Istanbul sabiha gokcen airport on 4th April to london Standsted. Travelled from London stansted to Belfast international on 5th april"] <- "England, Turkey"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled from England (London) to Belfast Northern Ireland"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled from Greece to Dublin, Ireland 14th July"] <- "Greece"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled from London - works in London."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled from London, England to Belfast, Northern Ireland	"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled from Oslo Norway on Sunday 20th Dec 2020 to Dublin airport via Germany (Frankfurt)"] <- "Germany, Norway, Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled to Majorca on Monday 12/07/2021 and returned on Friday 16/07/2021."] <- "Balearic Islands"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelling home from Ibiza"] <- "Balearic Islands"
+travellers$CountriesVisited[travellers$CountriesVisited == "Uganda-Holland-England"] <- "England, Holland, Uganda"
+travellers$CountriesVisited[travellers$CountriesVisited == "UK (LONDON)"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Visit to family home in Donegal for Christmas: address: Gortmacoll Milford Donegal F92 K163"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Visit to London from 10th December to 16th December inclusive"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Warrington Cheshire England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Warsaw, Poland, via Dublin. Case lives in the Republic of Ireland"] <- "Poland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Was in Qatar. Travelled from Doha to Dublin on 25/03/21. Has been escalated to CL. Aware of flight-all travellers being followed up due to new variant detected on flight."] <- "Qatar"
+travellers$CountriesVisited[travellers$CountriesVisited == "Waterford - Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Wolverhampton Leeds Selby Doncaster"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Worked in Boots Pharmacy Letterkenny Retail Park, Co. Donegal on 22/12/2020. Currently a locum pharmacist with Clarity Locums."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Working in Dublin Have used HSE track and trace app"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Working in Industrial estate in Norwich"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Works in ROI. Worked Monday to Friday last week and Monday to Wednesday this week."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Zimbabwe Zambia Ethopia London Heathrow Liverpool London Liverpool Belfast"] <- "England, Ethopia, Zambia, Zimbabwe"
+travellers$CountriesVisited[travellers$CountriesVisited == "150 Scar Lane, Huddersfield HD3 4PY, England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Amsterdam Singapore Jakata Bali"] <- "Amsterdam, Indonesia, Singapore"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ashbourne ROI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Azerbaijan Turkey England"] <- "Azerbaijan, England, Turkey"
+travellers$CountriesVisited[travellers$CountriesVisited == "Belarus England"] <- "Belarus, England"
+travellers$CountriesVisited[travellers$CountriesVisited == "belfast-london gatwick on 03/01/2021."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Benidorm"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Bermuda. England (Gatwick )"] <- "Bermuda"
+travellers$CountriesVisited[travellers$CountriesVisited == "Bridgeend service station Co. Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Brussels Belgium"] <- "Belgium"
+travellers$CountriesVisited[travellers$CountriesVisited == "Caffery International LTD Coolfore, Ashbourne Co Meath, Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Canada (Toronto) Mexico (Cancun)"] <- "Canada, Mexico"
+travellers$CountriesVisited[travellers$CountriesVisited == "Case lives in ROI ( Donegal) and works in Londonderry"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Central England for work purposes travel postcode LE 671ER and NG31 9SP"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Centreparcs Whinfell Old Sawmill Cottages 2 Whinfell, Whinfell CA10 2DW"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Cyprus Athens"] <- "Cyprus, Greece"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dubai Dublin"] <- "United Arab Emirate"
+travellers$CountriesVisited[travellers$CountriesVisited == "dublin ireland bristol england wales"] <- "England, ROI, Wales"
+travellers$CountriesVisited[travellers$CountriesVisited == "Egypt (Cairo) France (Paris CDG) Holland (Amsterdam Schippol)"] <- "Egypt, France, Holland"
+travellers$CountriesVisited[travellers$CountriesVisited == "England - 4 Hall Farm Close SK7 6PJ"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Travelled from Gatwick to Dublin	"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Cornwall St Ives"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Working Hindhead Tunnell, London"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "France Monte Carlo, Monacco"] <- "France, Monacco"
+travellers$CountriesVisited[travellers$CountriesVisited == "Galway clinic Galway Clinic Doughiska Co. Galway H91HHT0 Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Galway clinic Galway Clinic Doughiska Co. Galway H91HHT0 Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Gran Canaria"] <- "Grand Canary Island"
+travellers$CountriesVisited[travellers$CountriesVisited == "I visited England for work, I got a flight home on Thursday 04 March 2021."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ibiza"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "India Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ireland - Dundalk -County Louth"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Isle of Wight Southampton, England"] <- "Isle of Wight"
+travellers$CountriesVisited[travellers$CountriesVisited == "England / Scotland"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "England for Euro football final on Sunday 11 July"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Flew back from London"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Flew from London City Airport to Belfast City Airport on Friday 16th July (symptoms developed later that evening)."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Haven caravan resort in Fleetwood and into blackpool also Blackpool pleasure beach on Tuesday"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "I visited my mobile home in Donegal rep of ireland with my household"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland ,Greenore Golf Club,Dundalk,A91 RY10,County Louth."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == " Scotland"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "England- 12/7/2021-to Manchester. Returned on 15/7/2021"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Travelled from Gatwick to Dublin"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Cornwall St Ives"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Working Hindhead Tunnell, London"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "France and England"] <- "England, France"
+travellers$CountriesVisited[travellers$CountriesVisited == "I visited England for work, I got a flight home on Thursday 04 March 2021."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Liverpool, England (12/07/2021 - 15/07/2021)"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Works in ROI. Worked Monday to Friday last week and Monday to Wednesday this week."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Wales/England"] <- "England, Wales"
+travellers$CountriesVisited[travellers$CountriesVisited == "Wolverhampton Leeds Selby Doncaster"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "United Kingdom Skegness"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Sweden germany ROI"] <- "Germany, Ireland, Sweden"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spain , Ibiza"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Donegal, Republic of Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Donegal, ROI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Edinburgh in Scotland"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "England - Manchester and Cornwall"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Scotland"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "England, Denmark, England, Wales, Scotland, N Ireland"] <- "Denmark, England, Scotland, Wales"
+travellers$CountriesVisited[travellers$CountriesVisited == "Fleetwood haven caravan park Blackpool Stayed in premier Inn in dumfries on Thursday 8th July"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "I was in Edinburgh."] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ireland - Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Lived in Canada and moved back to North of Ireland"] <- "Canada"
+travellers$CountriesVisited[travellers$CountriesVisited == "Majorca Balearic Islands"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of  Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland  Dublin"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland  (Dublin)"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland (Dublin). For Work"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland Dundalk"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI - Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI  -Drogheda for work daily"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI. Counties Galway and Silgo"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Rossnowlagh, Co. Donegal since Friday 16th July"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland (Edinburgh) Case is a University student in Edinburgh"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "South Wales (Cardiff) 3/7 to 9/7 Cornwall (Padstow) 9/7 to 16/7 North Wales (Llandudno) 16/7 to 18/7"] <- "England, Wales"
+travellers$CountriesVisited[travellers$CountriesVisited == "travelled from dublin airport direct to istanbul airport on 25th March - no detail of flight but was at 16.15 or 16.45 hrs. Travelled from Istanbul sabiha gokcen airport on 4th April to london Standsted. Travelled from London stansted to Belfast international on 5th april"] <- "England, Turkey"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled from Alicante To Bristol airport From Bristol to Belfast"] <- "England, Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled from London, England to Belfast, Northern Ireland"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled from Zakynthos to london Gatwick and then london Gatwick to Northern Ireland"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled to England with work."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Wolverhampton Leeds Selby Doncaster"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Working in Dublin Have used HSE track and trace app"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI North Dublin - Baldoyle"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI On holiday in River Valley Caravan Park, Redcross Co. Wicklow."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Roscommon, County Roscommon	"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland. Glasgow city"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spain Ibiza "] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == " England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == " USA"] <- "USA"
+travellers$CountriesVisited[travellers$CountriesVisited == "Balearic Islands Majorica"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Balearic Islands Majorca"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Balearics Ibiza"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Bundoran in Ireland."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Bundoran, co donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Dublin Wales Blackpool"] <- "England, Ireland, Wales"
+travellers$CountriesVisited[travellers$CountriesVisited == "Emgland"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England - Cornwall"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England   cornwell stayed at self-catering cottage "] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England ( Burgh by Sands just outside Carlisle )"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England (Manchester)"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "England Scotland"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "England. From Friday 9 July to Friday 16 July."] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Flight home from Heathrow - Belfast"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "I visited Porsteward myself 2 weeks ago by car."] <- "NI"
+travellers$CountriesVisited[travellers$CountriesVisited == "Kilkenny, Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Liverpool 2nd to 16th July"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "London Luton"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "London Brighton"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Mallorca"] <- "Balearic Islands"
+travellers$CountriesVisited[travellers$CountriesVisited == "Mallorca to Belfast city airport on 21st July"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Menorca"] <- "Balearic Islands"
+travellers$CountriesVisited[travellers$CountriesVisited == "Mullaghmore Beach, Sligo"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland (Dublin)"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland,"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland, Co Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of ireland, donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Republic of Ireland, in county Waterford"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "RO1"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Roi"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI (Donegal)"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI Ballyshannon Co Donegal"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI Belgium Holland Germany Poland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Roscommon, County Roscommon"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Rosguill Holiday Park, Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Rosguill Holiday Park Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland Travelled out 31.07.21 Travelled Home 07.08.21"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Scotland, england"] <- "England, Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "South of Ireland for a staycation"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spain  magluf jet 2 hoildays hotel and transfer to hotel package"] <- "Balearic Islands"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spain Ibiza"] <- "Balearic Islands, Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "Spain islands"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "travelled from dublin airport direct to istanbul airport on 25th March - no detail of flight but was at 16.15 or 16.45 hrs. Travelled from Istanbul sabiha gokcen airport on  4th April to london Standsted. Travelled from London stansted to Belfast international on 5th april"] <- "England, Turkey"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled to Majorca departed Monday July 12th and returned Friday July 16th"] <- "Balearic Islands"
+travellers$CountriesVisited[travellers$CountriesVisited == "Travelled to Waterford, Dungarvan on Saturday 17th July. Stayed in rented accommodation, no one else present other than the family."] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "United Kingdom"] <- "UK"
+travellers$CountriesVisited[travellers$CountriesVisited == "Visited Flushing and Falmouth Cornwall"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Wales. Haven - Hafan Y Mor holiday Park. 9th to 19th July 2021 Visited the entertainment settings including: The Cove, The Boardwalk, Swimming Pool, pottery class, outdoor activities."] <- "Wales"
+travellers$CountriesVisited[travellers$CountriesVisited == "Working in Dublin Have used HSE track and trace app"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Majorca"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "ROI"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Went on Stena Ferry to Cairnryan on a day trip on 22nd July"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "England\nNigeria"] <- "Nigeria"
+travellers$CountriesVisited[travellers$CountriesVisited == "United Kingdom\r\nCity - England"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ireland: Carlingford"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "I returned from France on July 6th"] <- "France"
+travellers$CountriesVisited[travellers$CountriesVisited == "I visited England for my 19th birthday with 3 other friends who are also positive for the virus. We visited Thursday 29th July- Monday 2nd August"] <- "England"
+travellers$CountriesVisited[travellers$CountriesVisited == "Stenaline \r\n7.30am belfast to Cairnryan  1/08/2021"] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Ireland. Close contact of a family member who had travelled from london"] <- "Ireland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Visited Edinburgh for a wedding on 23/07/2021.\r\nI have had notification that I was in contact with someone there with a positive covid result."] <- "Scotland"
+travellers$CountriesVisited[travellers$CountriesVisited == "Majorca, Spain"] <- "Spain"
+travellers$CountriesVisited[travellers$CountriesVisited == "United Arab Emirate"] <- "United Arab Emirates"
+travellers$CountriesVisited[travellers$CountriesVisited == "case has travelled form Hydrabad in India and has travelled through bangalore to England . He then travelled onto Belfast City Airport"] <- "India"
+travellers$CountriesVisited <- gsub("ROI", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Moscow", "Russia", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Amsterdam", "Netherlands", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Balearic Islands", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("USA", "United States", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("GB", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("UK", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Dubai", "United Arab Emirates", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("dubai", "United Arab Emirates", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("ROI", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("RoI", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Roi", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("RIO", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("RO1", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("roi", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("R.O.I.", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("R.O.I", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Republic of Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("republic of ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("REPUBLIC OF IRELAND", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("REPUBLIC OF iRELAND", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Republci of Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Rep. Of Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Dublin", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("County Donegal Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Ireland - Donegal", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Co Louth, 15mins away to visit my parents and family on sunday 27th", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Car journey to Dundalk county Louth Ireland for two hours shopping", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Ireland - Letterkenny, Co. Donegal.", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Visit to family home in Donegal for Christmas: address: Gortmacoll Milford Donegal F92 K163", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Flight from India to LHR\nLHR to BHD", "India", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("case has travelled form Hydrabad in India and has travelled through bangalore to England . He then travelled onto Belfast City Airport", "India", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("India, England, N. Ireland", "India", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("India, LHR, N. Ireland", "India", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Ibiza", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("United Kingdom Skegness", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Uganda-Holland-England", "Uganda", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Teneriffe", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("New Delhi to London Heathrow then connecting flight to Belfast after quarantine.", "India", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Galway clinic Galway Clinic Doughiska Co. Galway H91HHT0 Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("travelled from dublin airport direct to istanbul airport on 25th March - no detail of flight but was at 16.15 or 16.45 hrs. Travelled from Istanbul sabiha gokcen airport on  4th April to london Standsted. Travelled from London stansted to Belfast international on 5th april", "Turkey", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Mallorca - Balearic Islands", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("England  - Liverpool", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Liverpool", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("London  - England", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("London, England", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("London", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("ENGLAND", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("england", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Portsmouth, England", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Manchester, England", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Birmingham UK", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("England-London. Did not leave Gatwick airport as stayed in airport hotel-the Hilton", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Netherlands and England|Holland", "Netherlands", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("150 Scar Lane, Huddersfield HD3 4PY, England", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Altan Loch Hotel Donegal", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("America and london", "United States", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Ardmore\nCounty Waterford", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Ashbourne Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("SPAIN", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Balearic Island  Majorca.", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Balearic Islands  Majorca.", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Balearic Islands Majorca", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Balearic Islands Majorica", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Balearic Mallorca!", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Balearics Spain", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Bath England", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Belaric islands Santa ponsa", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Belarus England", "Belarus", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("belfast-london gatwick on 03/01/2021.", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Belfast city airport to Edinburgh \n& return", "Scotland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("belfast city airport to Exeter", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Belfast City Airport to Exeter , England\n\n& return", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Belfast to Glascow and return", "Scotland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Benidorm", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Berlin, Amsterdam and Dublin-all connecting flights commencing 28/5/21. Employed via German Government and currently residing in Bangor. Self isolating in Bangor", "Germany", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Bermuda and Gatwick England", "Bermuda", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Bermuda. England (Gatwick )", "Bermuda", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Birmingham United Kingdom", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Blackpool", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Blackpool \nflew via manchester", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Blackpool england", "England", travellers$CountriesVisited)
+#travellers$CountriesVisited <- gsub("Bosnia", "Bosnia and Herzegovina", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("BRAY CO wicklow", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Brazil\r\nPortugal\r\nIreland", "Brazil", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Bridge End,Co Donegal", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Bridgeend service station Co. Donegal", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Brussels Belgium", "Belgium", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Buncrana", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Bermuda. England (Gatwick )", "Bermuda", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Bundoran in Ireland.", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Bundoran\nIreland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Bundoran, co donegal", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Bundoran. Co. Donegal Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Caffery International LTD Coolfore, Ashbourne Co Meath, Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Canada and Ireland", "Canada", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("case flew in from England on Friday 25th June", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("case has travelled form Hydrabad in India and has travelled through bangalore to London . He then travelled onto Belfast City Airport", "India", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Case lives in Ireland ( Donegal) and works in Londonderry", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Caseys Caravan and Camping Park,Donegal", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Central England for work purposes travel postcode LE 671ER and NG31 9SP", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Centreparcs Whinfell Old Sawmill Cottages 2 Whinfell, Whinfell CA10 2DW", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Claas uk by ferry Belfast to England then home holly head to Dublin.o", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Co Cork Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Co Cork, Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Co Donegal\n1.. moville - flat no address at Rigney Birthday party\n\n2 ... 4 Cnocglass Fanad family holiday house", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Co Kildare, Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Co. Leitrim Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Co.Donegal R.Ireland in Fahan", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Cork, Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("cornwall England", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("CORNWALL ENGLAND", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("County Donegal", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("County Donegall", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("County Kerry\nIreland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("County Louth", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Creeslough\n Donegal\nIreland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Crete", "Greece", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Crete,", "Greece", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Cyprus & England", "Cyprus", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Cyprus Athens", "Cyprus", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Day trip to Leeds to visit son for first time this year.I believe I caught COVID from him as his household has tested positive and he’s awaiting results", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Derry", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("England, Scotland", "Scotland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("majorca", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Athens, Cyprus", "Greece, Cyprus", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Berlin, Amsterdam and Ireland-all connecting flights commencing 28/5/21. Employed via German Government and currently residing in Bangor. Self isolating in Bangor", "Germany, Netherlands", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Crete", "Greece", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("United Kingdom\r\nCity - England", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("England and America|Flight from Philedelphia to Ireland|United States Colorado and New Mexico", "United States", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("wales", "Wales", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain, Spain", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain Spain", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain magluf   with jet 2 hoildays  transfer and hotel", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("spain", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Scotland - Edinburgh", "Scotland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Scotland - Belfast- Edinburgh", "Scotland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Scotland - Inverness", "Scotland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Scotland - work in Scotland Monday to Friday weekly. Travel to Edinburgh Monday AM, return Friday PM", "Scotland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Scotland - Inverness", "Scotland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Glasgow,England|scotland \nEngland", "Scotland, England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Scotland \nEngland", "Scotland, England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Scotland \r\nEngland\r\nWales", "Scotland, England, Wales", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Scotland spean bridge", "Scotland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("scotland\nEngland", "Scotland, England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Scotland, Edinburgh", "Scotland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("scotland, England", "Scotland, England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Scotland. Student in Glasgow University", "Scotland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain-Alcudia", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain - MALLORCA", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain  magluf  jet 2 hoildays hotel and transfer to hotel package|Went To Malaga in Spain|Mallorca - Spain|MAJORCA", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain (Malaga)", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain 1 month", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain Alcudia\nfrom 10th-20th July 2021 inclusive. No information about flights or accommodation available as son booked everything.", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain and England", "Spain, England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain mainland", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain\nFrance\nIreland", "Spain, France, Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Spain (Malaga)|Majorca Spain", "Spain", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Belarus, England", "Belarus", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Donegal - 4 Cnocglass, Fanad\nby car with famlly members", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Donegal in Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Donegal Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Donegal\nCreeslough", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Downings Republic of ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("dublin Ireland", "Ireland", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("England -  England", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("England - England", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("England - Manchester", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("England United States", "England, United States", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("from Guernsey to Belfast via Gatwick", "Guernsey", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("England for 1 week. 17/07/21-24/07/21. Travelled to Gatwick Airport from Northern Ireland. Stayed in Citadines Apartment Hotel, Northumberland Road, England.|I visted bournemouth|England   cornwell stayed at self-catering cottage|uk|Flew to Bristol on 22.7.21.", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Ireland  Ireland city|Ireland Ireland|Enniscrone, Co Sligo, Ireland|Ireland (Donegal)", "ROI", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("My daughters house, Cork|Ireland, day trip to Rossnawlagh beach in Donegal on 25/7/21|Ireland (Co. Clare/Co.Kerry)|Ireland - Premier Inn airport hotel|Ireland /SLIGO|Ireland-|Ireland - bundoron, co. Donegal|Ireland Rosguill Holiday Park Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland +353 74 915 5766|Ireland, Donegal, Greencastle|Ireland: Carlingford|Ireland. Close contact of a family member who had travelled from london|Ireland  Ireland city|Galway,Ireland|visited his mother in north of ireland-present in north since 6/8/21-8/8/21|Ireland County Sligo|Ireland Rosguill Holiday Park Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland +353 74 915 5766|Rosguill Holiday Park Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland Travelled out 31.07.21 Travelled Home 07.08.21|Sligo|Rosguill Holiday Park Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland Travelled out 31.07.21 Travelled Home 07.08.21|Ireland Co. Donegal Ardara|Ireland Rosguill Holiday Park Melmore Road, Gortnalughoge, Letterkenny, Co. Donegal, F92 W965, Ireland +353 74 915 5766", "ROI", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub(("Greece,|Greece, Cyprus"), "Greece", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Wales England|England to Northern Ireland|England, England to be exact|Visited England|England, bath|England, England|United Kingdom only|England. England from 26/07/2021 to 29/07/2021 however symptoms only started late on the Friday night|To belfast from stansted|Newcastle upon Tyne|Flew from England (Louton Airport) to Belfast International Airport on  Tuesday the 3rd of August.|England England|Flight from England Gatwick to Belfast on 01/08/2021 at 18:10|Claas England by ferry Belfast to England then home holly head to Ireland.o|England - Ireland|England  flew via manchester|England (Portsmouth)|England (via Scotland)|I went to England on 2nd-7th July.|I visited England for my 19th birthday with 3 other friends who are also positive for the virus. We visited Thursday 29th July- Monday 2nd August|England  flew via manchester|England (liverpool) ", "England", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Berlin, Netherlands and ROIall connecting flights commencing 28/5/21. Employed via German Government and currently residing in Bangor. Self isolating in Bangor", "Berlin, Netherlands, ROI", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("England  Connah's Quay, Wales (via Ireland and England Airport)", "Wales", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Lives in Ireland and travelled to Warsaw, Poland via Ireland", "Wales", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("England Jersey channel islands", "England, Channel Islands", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Irelandl|Ireland Lives in Donegal", "ROI", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Mali France", "France", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("Ireland", "ROI", travellers$CountriesVisited)
+travellers$CountriesVisited <- gsub("United States", "USA", travellers$CountriesVisited)
 
 
 ### COUNTRY TIDY END ####
 
 ## Country tallies
-country.count <- as.data.frame(table(travellers$CountriesVisited.x))
+country.count <- as.data.frame(table(travellers$CountriesVisited))
 country.count <- dplyr::arrange(country.count, desc(Freq))
 #colnames(country.count) <- c("country", "count")
 #country.count <- left_join(country.count, all.countries.status, by = "country")
 
 topten <- head(country.count, 10)
 colnames(topten) <- c("country", "count")
-#topten <- left_join(topten, all.countries.status, by = "country")
 colnames(topten) <- c("Country", "Count"
                       #, "Status"
 )
 
-colnames(travellers)[colnames(travellers) == "CountriesVisited.x"] <- "CountriesVisited"
+colnames(travellers)[colnames(travellers) == "CountriesVisited"] <- "CountriesVisited"
 
 ####### REPORT DOWNLOADS  #######
 system.date <- as.Date(Sys.Date(), format = "%d-%m-%Y")

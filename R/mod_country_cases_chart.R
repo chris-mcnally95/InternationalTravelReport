@@ -31,7 +31,7 @@ mod_country_cases_chart_ui <- function(id){
           p("This graph shows the count of cases from travellers outside NI per epiweek, broken down by countries travelled" ),
           hr(),
           shiny::sliderInput(
-            inputId = "week2",
+            inputId = "week_selection1",
             label = "Please select desired Epiweek range",
             value = c(0,as.numeric(strftime(Sys.Date(), format = "%V"))),
             min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
@@ -45,7 +45,7 @@ mod_country_cases_chart_ui <- function(id){
           p("This graph shows the scale of cases from travellers outside NI per epiweek as a fraction of countries travelled" ),
           hr(),
           shiny::sliderInput(
-            inputId = "week2",
+            inputId = "week_selection2",
             label = "Please select desired Epiweek range",
             value = c(0,as.numeric(strftime(Sys.Date(), format = "%V"))),
             min = 0, max = as.numeric(strftime(Sys.Date(), format = "%V")),
@@ -60,7 +60,7 @@ mod_country_cases_chart_ui <- function(id){
 #' country_cases_chart Server Functions
 #'
 #' @noRd 
-mod_country_cases_chart_server <- function(id){
+mod_country_cases_chart_server <- function(id, date_range1, date_range2){
   moduleServer( id, function(input, output, session){
     
     country.plot <- travellers %>% 
@@ -97,6 +97,8 @@ mod_country_cases_chart_server <- function(id){
     # All Countries by Epiweek
     output$all.case.by.week.chart <- plotly::renderPlotly({
       
+      shiny::req(date_range1())
+      
       all.countries.by.week <- ggplot2::ggplot(country.plot, ggplot2::aes(EpiweekReturned)) +
         ggplot2::geom_bar(ggplot2::aes(fill=country),
                  position = ggplot2::position_stack(reverse = TRUE)) +
@@ -112,8 +114,8 @@ mod_country_cases_chart_server <- function(id){
                                               "navy",
                                               "wheat4"),
                                    name = "Country") +
-        ggplot2::scale_x_continuous(limits =  c(input$week2[1],
-                                                input$week2[2]),
+        ggplot2::scale_x_continuous(limits =  c(as.numeric(date_range1()[1]),
+                                                as.numeric(date_range1()[2])),
                            breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) + #Adjusting the size of graph in the tab 
         ggplot2::theme_bw()
                                      
@@ -126,6 +128,8 @@ mod_country_cases_chart_server <- function(id){
     
     # All Countries Percentage by Epiweeek
     output$all.case.by.week.chart.per <- plotly::renderPlotly({
+      
+      shiny::req(date_range2())
   
       all.countries.by.week.per <- ggplot2::ggplot(country.plot, ggplot2::aes(EpiweekReturned)) +
         ggplot2::geom_bar(ggplot2::aes(fill=country),
@@ -142,8 +146,8 @@ mod_country_cases_chart_server <- function(id){
                                               "navy",
                                               "wheat4"),
                                    name = "Country") +
-        ggplot2::scale_x_continuous(limits =  c(input$week2[1],
-                                       input$week2[2]),
+        ggplot2::scale_x_continuous(limits =  c(as.numeric(date_range2()[1]),
+                                                as.numeric(date_range2()[2])),
                            breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) + #Adjusting the size of graph in the tab 
         ggplot2::theme_bw()
       

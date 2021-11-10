@@ -22,7 +22,17 @@ app_server <- function( input, output, session ) {
   
   #--------------COUNTRY CASES CHART--------------
   
-  mod_country_cases_chart_server("country_cases_chart_ui_1")
+  selected_dates1 <- shiny::reactive ({
+    input$week_selection1
+  })
+  
+  selected_dates2 <- shiny::reactive ({
+    input$week_selection2
+  })
+  
+  mod_country_cases_chart_server("country_cases_chart_ui_1", 
+                                 date_range1 = selected_dates1,
+                                 date_range2 = selected_dates2)
   
   #--------------REPORTS--------------
   
