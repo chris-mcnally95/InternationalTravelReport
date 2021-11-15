@@ -133,26 +133,23 @@ travellers$WhenDidYouLeaveNorthernIreland <- strptime(travellers$WhenDidYouLeave
 travellers$WhenDidYouReturnToNorthernIreland <- strptime(travellers$WhenDidYouReturnToNorthernIreland, format = "%Y-%m-%d") + lubridate::days(1) #Day behind fix
 travellers$DateOfOnset <- strptime(travellers$DateOfOnset, format = "%Y-%m-%d")
 
-#travellers$CreatedOn <- strptime(travellers$CreatedOn, format = "%Y-%m-%d")
 travellers$CreatedOn <- as.Date(travellers$CreatedOn, format = "%Y-%m-%d")
 
 travellers$WhenDidYouLeaveNorthernIreland <- format(travellers$WhenDidYouLeaveNorthernIreland, format = "%d-%m-%Y")
 travellers$WhenDidYouReturnToNorthernIreland <- format(travellers$WhenDidYouReturnToNorthernIreland, format = "%d-%m-%Y")
 travellers$DateOfOnset <- format(travellers$DateOfOnset, format = "%d-%m-%Y")
-#travellers$CreatedOn <- format(travellers$CreatedOn, format = "%d-%m-%Y")
 
 ## Tidy pre drop down data
 travellers$CountriesVisited <- lapply(travellers$CountriesVisited, stringr::str_trim)
 
-# Source Country Name Cleaner Script
-
 source("./country_name_cleaner.R")
+
+# Assign Common Travel Area
+CTA <- as.vector(c("England", "Scotland", "Wales", "Isle of Man", "Guernsey", "Jersey", "ROI")) 
 
 ## Country tallies
 country.count <- as.data.frame(table(travellers$CountriesVisited))
 country.count <- dplyr::arrange(country.count, desc(Freq))
-#colnames(country.count) <- c("country", "count")
-#country.count <- left_join(country.count, all.countries.status, by = "country")
 
 topten <- head(country.count, 10)
 colnames(topten) <- c("country", "count")
@@ -161,6 +158,41 @@ colnames(topten) <- c("Country", "Count"
 )
 
 colnames(travellers)[colnames(travellers) == "CountriesVisited"] <- "CountriesVisited"
+
+## Country Colours
+
+scale_fill_countries <- function(...){
+  ggplot2:::manual_scale(
+    'fill', 
+    values = setNames(c('seagreen',
+                        'red3',
+                        'gold',
+                        'royalblue',
+                        "maroon",
+                        "red",
+                        "olivedrab",
+                        "skyblue",
+                        "darksalmon",
+                        "navy",
+                        "grey90"
+                        ),
+                      c("ROI",
+                        "England",
+                        "Spain",
+                        "Scotland",
+                        "Portugal",
+                        "Poland",
+                        "Wales",
+                        "Greece",
+                        "Croatia",
+                        "France",
+                        "Other"
+                        )
+                      ), 
+    name = "Country",
+    ...
+  )
+}
 
 ####### REPORT DOWNLOADS  #######
 system.date <- as.Date(Sys.Date(), format = "%d-%m-%Y")

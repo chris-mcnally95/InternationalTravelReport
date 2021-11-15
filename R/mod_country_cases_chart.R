@@ -102,18 +102,7 @@ mod_country_cases_chart_server <- function(id, date_range1, date_range2){
       all.countries.by.week <- ggplot2::ggplot(country.plot, ggplot2::aes(EpiweekReturned)) +
         ggplot2::geom_bar(ggplot2::aes(fill=country),
                  position = ggplot2::position_stack(reverse = TRUE)) +
-        ggplot2::scale_fill_manual(values = c("seagreen",
-                                              "red3",
-                                              "royalblue",
-                                              "gold",
-                                              "maroon", 
-                                              "springgreen4",
-                                              "red",
-                                              "olivedrab",
-                                              "skyblue",
-                                              "navy",
-                                              "wheat4"),
-                                   name = "Country") +
+        scale_fill_countries() +
         ggplot2::scale_x_continuous(limits =  c(as.numeric(date_range1()[1]),
                                                 as.numeric(date_range1()[2])),
                            breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) + #Adjusting the size of graph in the tab 
@@ -134,18 +123,7 @@ mod_country_cases_chart_server <- function(id, date_range1, date_range2){
       all.countries.by.week.per <- ggplot2::ggplot(country.plot, ggplot2::aes(EpiweekReturned)) +
         ggplot2::geom_bar(ggplot2::aes(fill=country),
                  position = ggplot2::position_fill(reverse = TRUE)) +
-        ggplot2::scale_fill_manual(values = c("seagreen",
-                                              "red3",
-                                              "royalblue",
-                                              "gold",
-                                              "maroon", 
-                                              "springgreen4",
-                                              "red",
-                                              "olivedrab",
-                                              "skyblue",
-                                              "navy",
-                                              "wheat4"),
-                                   name = "Country") +
+        scale_fill_countries() +
         ggplot2::scale_x_continuous(limits =  c(as.numeric(date_range2()[1]),
                                                 as.numeric(date_range2()[2])),
                            breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) + #Adjusting the size of graph in the tab 

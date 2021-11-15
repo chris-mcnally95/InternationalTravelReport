@@ -53,7 +53,7 @@ mod_home_server <- function(id){
     output$total_cases <- shinydashboard::renderInfoBox({
       shinydashboard::infoBox(
         "Total Reported Cases from Population",
-        paste0(nrow(Allcases)), 
+        paste0(format(nrow(Allcases), big.mark = ",")), 
         subtitle = paste("Successful Calls: ", nrow(dplyr::filter(Allcases,
                                                            CaseFileStatus != "Cancelled"))),
         icon = icon("calculator"), 
@@ -64,7 +64,7 @@ mod_home_server <- function(id){
     output$total_trav_cases <- shinydashboard::renderInfoBox({
       shinydashboard::infoBox(
         "Total Reported Cases from International Travellers", 
-        paste0(nrow(travellers)), 
+        paste0(format(nrow(travellers), big.mark = ",")),
         icon = icon("globe-europe"), 
         color ="blue")
     })
