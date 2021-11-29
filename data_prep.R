@@ -174,6 +174,7 @@ scale_fill_countries <- function(...){
                         "skyblue",
                         "darksalmon",
                         "navy",
+                        "mediumblue",
                         "grey90"
                         ),
                       c("ROI",
@@ -186,6 +187,7 @@ scale_fill_countries <- function(...){
                         "Greece",
                         "Croatia",
                         "France",
+                        "USA",
                         "Other"
                         )
                       ), 
