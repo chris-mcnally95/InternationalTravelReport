@@ -50,7 +50,8 @@ getTableFilteredCombined <- function(table1, table2, table3) {
                     DateOfSample,
                     Gender,
                     AgeAtPositiveResult,
-                    CreatedOn) 
+                    CreatedOn,
+                    TestID) 
   }
   
   query <- short_locations(table1) %>%
@@ -205,6 +206,7 @@ previous.day.report <- travellers %>%
   dplyr::add_count(CountriesVisited, name = "TotalCases") %>%
   dplyr::select(CountriesVisited,
                 TotalCases,
+                TestID,
                 AlreadyCompletedViaSelfTrace,
                 WhenDidYouReturnToNorthernIreland,
                 DateOfOnset,
@@ -229,6 +231,7 @@ current.week.report <- travellers %>%
   dplyr::add_count(CountriesVisited, name = "TotalCases") %>%
   dplyr::select(CountriesVisited,
                 TotalCases,
+                TestID,
                 AlreadyCompletedViaSelfTrace,
                 WhenDidYouReturnToNorthernIreland,
                 DateOfOnset,
@@ -253,6 +256,7 @@ previous.week.report <- travellers %>%
   dplyr::add_count(CountriesVisited, name = "TotalCases") %>%
   dplyr::select(CountriesVisited,
                 TotalCases,
+                TestID,
                 AlreadyCompletedViaSelfTrace,
                 WhenDidYouReturnToNorthernIreland,
                 DateOfOnset,
@@ -277,6 +281,7 @@ last2.epiweeks.report <- travellers %>%
   dplyr::add_count(CountriesVisited, name = "TotalCases") %>%
   dplyr::select(CountriesVisited,
                 TotalCases,
+                TestID,
                 AlreadyCompletedViaSelfTrace,
                 WhenDidYouReturnToNorthernIreland,
                 DateOfOnset,
@@ -299,6 +304,7 @@ culmulative.report <- travellers %>%
   dplyr::add_count(CountriesVisited, name = "TotalCases") %>%
   dplyr::select(CountriesVisited,
                 TotalCases,
+                TestID,
                 AlreadyCompletedViaSelfTrace,
                 WhenDidYouReturnToNorthernIreland,
                 DateOfOnset,
