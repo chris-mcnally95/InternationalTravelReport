@@ -51,7 +51,9 @@ getTableFilteredCombined <- function(table1, table2, table3) {
                     Gender,
                     AgeAtPositiveResult,
                     CreatedOn,
-                    TestID) 
+                    TestID,
+                    HasRecentlyTravelled,
+                    RecentTravelDestination) 
   }
   
   query <- short_locations(table1) %>%
@@ -131,7 +133,7 @@ travellers$EpiweekCreated <-  sub('Epiweek0', 'Epiweek', travellers$EpiweekCreat
 travellers$EpiweekReturned <-  sub('Epiweek0', 'Epiweek', travellers$EpiweekReturned)
 
 travellers$WhenDidYouLeaveNorthernIreland <- strptime(travellers$WhenDidYouLeaveNorthernIreland, format = "%Y-%m-%d")
-travellers$WhenDidYouReturnToNorthernIreland <- strptime(travellers$WhenDidYouReturnToNorthernIreland, format = "%Y-%m-%d") + lubridate::days(1) #Day behind fix
+travellers$WhenDidYouReturnToNorthernIreland <- strptime(travellers$WhenDidYouReturnToNorthernIreland, format = "%Y-%m-%d") # + lubridate::days(1) #Day behind fix
 travellers$DateOfOnset <- strptime(travellers$DateOfOnset, format = "%Y-%m-%d")
 
 travellers$CreatedOn <- as.Date(travellers$CreatedOn, format = "%Y-%m-%d")
@@ -316,11 +318,15 @@ culmulative.report <- travellers %>%
                 AdditionalTravelInformation,
                 MoreDetail,
                 EpiweekCreated,
-                EpiweekReturned
+                EpiweekReturned,
+                HasRecentlyTravelled,
+                RecentTravelDestination
                 #, Status
   ) %>%
   dplyr::select(-c(EpiweekCreated, EpiweekReturned)) %>%
-  dplyr::arrange(CountriesVisited)
+  dplyr::arrange(CountriesVisited) %>% 
+  dplyr::rename(RecentlyTravelledAtTest = "HasRecentlyTravelled",
+                RecentDestinationAtTest = "RecentTravelDestination")
 
 
 #to find outlying country combinations
