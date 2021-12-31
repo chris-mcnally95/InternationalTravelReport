@@ -2,6 +2,7 @@
 synapse_server <- "swhscphipprduks01.sql.azuresynapse.net"
 synapse_database <- "exploratorydb"
 connection_driver <- "{ODBC Driver 17 for SQL Server}"
+today <- Sys.Date()
 
 con <- DBI::dbConnect(odbc::odbc(),
                       driver = connection_driver,
@@ -224,6 +225,29 @@ previous.day.report <- travellers %>%
                 #, Status
   ) %>%
   dplyr::select(-c(EpiweekCreated,
+                   EpiweekReturned)) %>%
+  dplyr::arrange(CountriesVisited)
+
+#Rolling 7 days
+rolling.1week.report <- travellers %>%
+  dplyr::filter(CreatedOn > ((Sys.Date())-lubridate::days(x=7)) & CreatedOn <= (Sys.Date())) %>% 
+  dplyr::add_count(CountriesVisited, name = "TotalCases") %>%
+  dplyr::select(CountriesVisited,
+                TotalCases,
+                TestID,
+                AlreadyCompletedViaSelfTrace,
+                WhenDidYouReturnToNorthernIreland,
+                DateOfOnset,
+                DateOfSample,
+                CaseNumber,
+                Gender,
+                AgeAtPositiveResult,
+                CreatedOn,
+                AdditionalTravelInformation,
+                MoreDetail,
+                EpiweekCreated,
+                EpiweekReturned) %>%
+  dplyr::select(-c(EpiweekCreated, 
                    EpiweekReturned)) %>%
   dplyr::arrange(CountriesVisited)
 

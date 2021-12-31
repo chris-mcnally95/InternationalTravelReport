@@ -42,6 +42,14 @@ mod_reports_ui <- function(id){
         ),
         
         shiny::tabPanel(
+          width = 12,
+          title = "Rolling 7 Day Report",
+          shiny::downloadButton(shiny::NS(id, "downloadData_rolling_week"), "Download Rolling 7 Day Report"),
+          hr(),
+          shinycssloaders::withSpinner(DT::dataTableOutput(shiny::NS(id, "travellers_rolling_week")))
+        ),
+        
+        shiny::tabPanel(
           title = "Weekly Report - Previous Epiweek",
           shiny::downloadButton(shiny::NS(id, "downloadData_last_week"), "Download Previous Epiweek Report"),
           hr(),
@@ -114,6 +122,29 @@ mod_reports_server <- function(id){
       filename = "DataCurrentEpiweek.csv",
       content = function(file) {
         write.csv(current.week.report, file, row.names = FALSE)
+      }
+    )
+    
+    # Rolling 7 day
+    
+    output$travellers_rolling_week = DT::renderDataTable({
+      DT::datatable(rolling.1week.report, 
+                    filter = 'top',
+                    options = list(
+                      dom = 'lBftrip',
+                      scrollX = T,
+                      order = list(
+                        9,
+                        "desc"),
+                      columnDefs = list(
+                        list(visible = FALSE, targets = 0))))
+    })
+    
+    ## Downloadable csv of selected dataset 
+    output$downloadData_rolling_week <- downloadHandler(
+      filename = "Data7DayRolling.csv",
+      content = function(file) {
+        write.csv(rolling.1week.report, file, row.names = FALSE)
       }
     )
     
