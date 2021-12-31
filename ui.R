@@ -43,7 +43,9 @@ ui <- dashboardPage(
             solidHeader = TRUE,
             title ="Welcome to the International Travel Dashboard.",
             p("This dashboard has been built to aid the CTC Data Management Team / Surveillance Team to montior COVID-19 cases related to international travel in 2021"),
-            p(strong("Please Note:")," The free text inputs of country entries are currently being addressed, therefore, some cases will be omitted temporarily")
+            p(strong("Please Note:")," The free text inputs of country entries are currently being addressed, therefore, some cases will be omitted temporarily."),
+            p(strong("Additional Note:")," As of 04/10/21 the Red, Amber, Green status of countries has been depractated and replaced with Red and Non-Red. This dashboard has 
+              been updated to reflect that.")
           )
         ),
         
@@ -58,14 +60,14 @@ ui <- dashboardPage(
         ),
         
         fluidRow(
-          infoBoxOutput("total_green_cases", width = 6),
-          infoBoxOutput("green_cases_this_week", width = 6)
+          infoBoxOutput("total_non_red_cases", width = 6),
+          infoBoxOutput("non_red_cases_this_week", width = 6)
         ),
         
-        fluidRow(
-          infoBoxOutput("total_amber_cases", width = 6),
-          infoBoxOutput("amber_cases_this_week", width = 6)
-        ),
+        # fluidRow(
+        #   infoBoxOutput("total_amber_cases", width = 6),
+        #   infoBoxOutput("amber_cases_this_week", width = 6)
+        # ),
         
         fluidRow(
           infoBoxOutput("total_red_cases", width = 6),

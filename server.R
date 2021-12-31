@@ -65,42 +65,23 @@ function(input, output, session) {
       color = "light-blue")
   })
   
-  output$total_green_cases <- renderInfoBox({
+  output$total_non_red_cases <- renderInfoBox({
     infoBox(
-      "Total Reported Cases from Green Countries", 
+      "Total Reported Cases from Non-Red Countries", 
       paste0(nrow(filter(travellers.status,
-                         Status == "Green"))), 
+                         Status == "Non-Red"))), 
       icon = icon("chart-bar"), 
       color ="green")
   })
   
-  output$green_cases_this_week <- renderInfoBox({
+  output$non_red_cases_this_week <- renderInfoBox({
     infoBox(
-      "Cases This Week from Green Countries", 
+      "Cases This Week from Non-Red Countries", 
       paste0(nrow(filter(travellers.status,
-                         Status == "Green",
+                         Status == "Non-Red",
                          EpiweekCreated == current.epiweek))), 
       icon = icon("plane-arrival"), 
       color = "green")
-  })
-  
-  output$total_amber_cases <- renderInfoBox({
-    infoBox(
-      "Total Reported Cases from Amber Countries", 
-      paste0(nrow(filter(travellers.status,
-                         Status == "Amber"))), 
-      icon = icon("chart-bar"), 
-      color ="yellow")
-  })
-  
-  output$amber_cases_this_week <- renderInfoBox({
-    infoBox(
-      "Cases This Week from Amber Countries", 
-      paste0(nrow(filter(travellers.status,
-                         Status == "Amber",
-                         EpiweekCreated == current.epiweek))), 
-      icon = icon("plane-arrival"), 
-      color = "yellow")
   })
   
   output$total_red_cases <- renderInfoBox({
@@ -122,6 +103,25 @@ function(input, output, session) {
       color = "red")
   })
   
+  # output$total_red_cases <- renderInfoBox({
+  #   infoBox(
+  #     "Total Reported Cases from Red Countries", 
+  #     paste0(nrow(filter(travellers.status,
+  #                        Status == "Red"))), 
+  #     icon = icon("chart-bar"), 
+  #     color ="red")
+  # })
+  # 
+  # output$red_cases_this_week <- renderInfoBox({
+  #   infoBox(
+  #     "Cases This Week from Red Countries", 
+  #     paste0(nrow(filter(travellers.status,
+  #                        Status == "Red",
+  #                        EpiweekCreated == current.epiweek))), 
+  #     icon = icon("plane-arrival"), 
+  #     color = "red")
+  # })
+  
   ####### COUNTRY FREQUENCY  #######
   
   output$top_ten = DT::renderDataTable({
@@ -141,11 +141,17 @@ function(input, output, session) {
     travellers.status.week.plot$EpiweekReturned <- as.numeric(travellers.status.week.plot$EpiweekReturned)
     travellers.status.week.plot$Status[is.na(travellers.status.week.plot$Status)] <- "NA"
     travellers.status.week.plot$Status <- as.factor(travellers.status.week.plot$Status)
-    travellers.status.week.plot$Status <- factor(travellers.status.week.plot$Status, levels=c("Red", "Amber", "Green", "NA"))
+    travellers.status.week.plot$Status <- factor(travellers.status.week.plot$Status, levels=c("Red",
+                                                                                              #"Amber",
+                                                                                              "Non-Red",
+                                                                                              "NA"))
     
     case.by.week.chart <- ggplot(travellers.status.week.plot, aes(EpiweekReturned)) +
       geom_bar(aes(fill=Status)) +
-      scale_fill_manual(values = c("firebrick", "goldenrod", "seagreen", "grey45"), name = "RAG Status") +
+      scale_fill_manual(values = c("firebrick",
+                                   #"goldenrod",
+                                   "seagreen",
+                                   "grey45"), name = "Status") +
       scale_x_continuous(limits =  c(input$week[1], input$week[2]), breaks = c(1:as.numeric(strftime(Sys.Date(), format = "%V")))) +
       theme_bw()
     
@@ -165,21 +171,33 @@ function(input, output, session) {
       select(CreatedOn, Status) %>% 
       filter(CreatedOn >= "2021-01-01" & CreatedOn <= Sys.Date()+1) %>%
       dplyr::group_by(month = lubridate::floor_date(as.Date(CreatedOn, format = "%d-%m"), "month")) %>% 
-      dplyr::mutate(Green = if_else(Status == "Green", 1, 0)) %>% 
-      dplyr::mutate(Amber = if_else(Status == "Amber", 1, 0)) %>% 
+      dplyr::mutate(Non_Red = if_else(Status == "Non-Red", 1, 0)) %>% 
+     # dplyr::mutate(Amber = if_else(Status == "Amber", 1, 0)) %>% 
       dplyr::mutate(Red = if_else(Status == "Red", 1, 0)) %>% 
       dplyr::mutate("NA" = if_else(is.na(Status), 1, 0)) %>%
-      dplyr::summarise_at(c("Green", "Amber", "Red", "NA"), sum, na.rm = TRUE) %>% 
-      tidyr::pivot_longer(cols = c("Green", "Amber", "Red", "NA")) %>% 
+      dplyr::summarise_at(c("Non_Red",
+                            #"Amber",
+                            "Red",
+                            "NA"), sum, na.rm = TRUE) %>% 
+      tidyr::pivot_longer(cols = c("Non_Red",
+                                   #"Amber",
+                                   "Red",
+                                   "NA")) %>% 
       filter(month >= "2021-01-01" & month <= Sys.Date()+1)
     
     travellers.status.mon.plot$name <- as.factor(travellers.status.mon.plot$name)
-    travellers.status.mon.plot$name <- factor(travellers.status.mon.plot$name, levels=c("Red", "Amber", "Green", "NA"))
+    travellers.status.mon.plot$name <- factor(travellers.status.mon.plot$name, levels=c("Red",
+                                                                                       # "Amber",
+                                                                                        "Non-Red",
+                                                                                        "NA"))
     
     
     case.by.month.plot <- ggplot(travellers.status.mon.plot, aes(fill = name, x = month, y = value)) +
       geom_bar(position="stack", stat="identity") +
-      scale_fill_manual(values = c("firebrick", "goldenrod", "seagreen", "grey45"), name = "RAG Status") +
+      scale_fill_manual(values = c("firebrick",
+                                   #"goldenrod",
+                                   "seagreen",
+                                   "grey45"), name = "Status") +
       scale_x_date(date_labels = "%m-%Y", breaks = "1 month") +
       theme_bw()
     
@@ -541,6 +559,7 @@ function(input, output, session) {
     DT::datatable(all.countries.status, options = list(pageLength = 50))
   })
   
+
   ####### METHODOLOGY  #######  
   
 }
